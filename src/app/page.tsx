@@ -15,8 +15,10 @@ function LoadingScreen() {
 }
 
 export default function Home() {
-  const { configured, loading, user, isMaster, needsProfile } = useAuth();
+  const { configured, loading, user, isMaster, needsProfile, emailLinkInUrl } =
+    useAuth();
 
+  if (!user && emailLinkInUrl) return <LoginGate />;
   if (configured && loading) return <LoadingScreen />;
   if (!user || needsProfile) return <LoginGate />;
   return isMaster ? <MasterDashboard /> : <ManagerDashboard />;

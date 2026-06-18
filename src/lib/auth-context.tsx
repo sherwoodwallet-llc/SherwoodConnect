@@ -60,6 +60,12 @@ function getStoredPendingEmail() {
   return window.localStorage.getItem(STORAGE_EMAIL_KEY) ?? "";
 }
 
+function hasEmailLinkParams() {
+  if (typeof window === "undefined") return false;
+  const params = new URL(window.location.href).searchParams;
+  return params.get("mode") === "signIn" && params.has("oobCode");
+}
+
 function getAuthRedirectOrigin() {
   if (typeof window === "undefined") return PRODUCTION_AUTH_REDIRECT_ORIGIN;
 
@@ -87,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [linkSent, setLinkSent] = useState(() =>
     Boolean(getStoredPendingEmail()),
   );
-  const [emailLinkInUrl, setEmailLinkInUrl] = useState(false);
+  const [emailLinkInUrl, setEmailLinkInUrl] = useState(hasEmailLinkParams);
   const [pendingEmail, setPendingEmail] = useState(getStoredPendingEmail);
   const [error, setError] = useState<string | null>(null);
 
@@ -127,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const auth = getFirebaseAuth();
       if (typeof window === "undefined") return false;
       const isEmailLink = isSignInWithEmailLink(auth, window.location.href);
-      setEmailLinkInUrl(isEmailLink);
+      setEmailLinkInUrl(isEmailLink || hasEmailLinkParams());
       if (!isEmailLink) return false;
 
       const email = (emailOverride || readPendingEmail()).trim().toLowerCase();

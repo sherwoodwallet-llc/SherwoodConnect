@@ -217,7 +217,12 @@ function CompleteEmailLinkView() {
         Complete login
       </h1>
       <p className="mt-2 text-sm leading-6 text-cream-muted">
-        Enter the email address that received this sign-in link.
+        If you started login in another tab, go back to the original Sherwood
+        Connect login page to finish setting up your account.
+      </p>
+      <p className="mt-2 text-sm leading-6 text-cream-muted">
+        You can also finish here by entering the email address that received
+        this sign-in link.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-6 space-y-4">
@@ -262,7 +267,7 @@ function CompleteEmailLinkView() {
           onClick={resetLogin}
           className="inline-flex w-full items-center justify-center rounded-full px-5 py-2 text-sm text-cream-muted transition-colors hover:text-cream"
         >
-          Request a new link
+          Back to login page
         </button>
       </form>
     </Shell>
