@@ -39,7 +39,7 @@ function NotConfigured() {
 }
 
 function ProfileSetup() {
-  const { saveProfile, user } = useAuth();
+  const { saveProfile, user, error: authError } = useAuth();
   const [name, setName] = useState("");
   const [initials, setInitials] = useState("");
   const [saving, setSaving] = useState(false);
@@ -85,7 +85,9 @@ function ProfileSetup() {
           placeholder="Initials (e.g. BG)"
           maxLength={4}
         />
-        {error ? <p className="text-sm text-red-300">{error}</p> : null}
+        {error || authError ? (
+          <p className="text-sm text-red-300">{error || authError}</p>
+        ) : null}
         <button
           type="submit"
           disabled={saving}

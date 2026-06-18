@@ -10,7 +10,7 @@ import {
 } from "firebase/firestore";
 import { getDb } from "./firebase";
 import { submitToGoogleSheets } from "./googleSheets";
-import type { ManagerProfile } from "./auth-context";
+import type { ManagerProfile } from "./profile";
 
 // Columns the manager fills in. "Manager Initials" is attributed automatically.
 export const LOG_COLUMNS = [

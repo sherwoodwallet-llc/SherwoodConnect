@@ -17,19 +17,14 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import {
-  getDb,
   getFirebaseAuth,
   isFirebaseConfigured,
   MASTER_EMAIL,
 } from "./firebase";
+import type { ManagerProfile } from "./profile";
 
-export type ManagerProfile = {
-  email: string;
-  name: string;
-  initials: string;
-};
+export type { ManagerProfile } from "./profile";
 
 type AuthContextValue = {
   configured: boolean;
@@ -84,6 +79,50 @@ function getAuthRedirectOrigin() {
   return window.location.origin;
 }
 
+async function readManagerProfile(current: User): Promise<ManagerProfile | null> {
+  const token = await current.getIdToken();
+  const response = await fetch("/api/profile", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  const data = (await response.json().catch(() => ({}))) as {
+    profile?: ManagerProfile | null;
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(data.error || "Could not load profile.");
+  }
+
+  return data.profile ?? null;
+}
+
+async function writeManagerProfile(
+  current: User,
+  payload: Pick<ManagerProfile, "name" | "initials">,
+): Promise<ManagerProfile> {
+  const token = await current.getIdToken();
+  const response = await fetch("/api/profile", {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json().catch(() => ({}))) as {
+    profile?: ManagerProfile;
+    error?: string;
+  };
+
+  if (!response.ok || !data.profile) {
+    throw new Error(data.error || "Could not save profile.");
+  }
+
+  return data.profile;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const configured = isFirebaseConfigured;
 
@@ -108,21 +147,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadProfile = useCallback(async (current: User) => {
     try {
-      const ref = doc(getDb(), "managers", current.uid);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const data = snap.data() as Partial<ManagerProfile>;
-        setProfile({
-          email: data.email ?? current.email ?? "",
-          name: data.name ?? "",
-          initials: data.initials ?? "",
-        });
-      } else {
-        setProfile(null);
-      }
-    } catch {
-      // Firestore may not be ready yet; treat as a new user needing profile setup.
+      const nextProfile = await readManagerProfile(current);
+      setProfile(nextProfile);
+      setError(null);
+    } catch (err) {
       setProfile(null);
+      setError(err instanceof Error ? err.message : "Could not load profile.");
     }
   }, []);
 
@@ -255,19 +285,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const saveProfile = useCallback(
     async (name: string, initials: string) => {
-      if (!user) return;
-      const ref = doc(getDb(), "managers", user.uid);
-      const payload: ManagerProfile = {
-        email: user.email ?? "",
+      if (!user) throw new Error("You are not signed in.");
+      const payload = {
         name: name.trim(),
         initials: initials.trim().toUpperCase(),
       };
-      await setDoc(
-        ref,
-        { ...payload, createdAt: serverTimestamp() },
-        { merge: true },
-      );
-      setProfile(payload);
+      const nextProfile = await writeManagerProfile(user, payload);
+      setProfile(nextProfile);
+      setError(null);
     },
     [user],
   );

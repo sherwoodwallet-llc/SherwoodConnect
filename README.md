@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sherwood Connect
 
-## Getting Started
+Next.js app for Sherwood manager outreach logs. Authentication uses Firebase email
+links. Manager profiles are loaded through authenticated API routes and cached in
+Redis when `REDIS_URL` is configured.
 
-First, run the development server:
+## Local Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Copy `.env.example` to `.env.local` and fill in the Firebase values before
+testing login.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Docker
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Build-time `NEXT_PUBLIC_*` values are baked into the browser bundle. Export them
+or run Compose with an env file when building the image.
 
-## Learn More
+```bash
+docker compose --env-file .env.local up --build
+```
 
-To learn more about Next.js, take a look at the following resources:
+The Compose stack runs the app on port `3000` and Redis on port `6379`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Production
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Deploy the repo to Railway with the root `Dockerfile`. Add a Railway Redis
+database and reference its `REDIS_URL` in the app service. Required app variables:
 
-## Deploy on Vercel
+- `NEXT_PUBLIC_FIREBASE_API_KEY`
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `NEXT_PUBLIC_FIREBASE_APP_ID`
+- `NEXT_PUBLIC_AUTH_REDIRECT_ORIGIN`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+- `REDIS_URL`
+- `GOOGLE_APPS_SCRIPT_WEBHOOK_URL`, if Google Sheets sync is enabled
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+After Railway assigns the app domain, add that domain to Firebase Auth authorized
+domains and set `NEXT_PUBLIC_AUTH_REDIRECT_ORIGIN` to that origin before
+rebuilding.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Checks
+
+```bash
+npm run lint
+npm run build
+docker build .
+```
