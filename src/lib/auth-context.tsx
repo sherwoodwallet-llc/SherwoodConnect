@@ -51,12 +51,31 @@ type AuthContextValue = {
 };
 
 const STORAGE_EMAIL_KEY = "sherwood:pendingEmail";
+const PRODUCTION_AUTH_REDIRECT_ORIGIN = "https://sherwood-connect.vercel.app";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function getStoredPendingEmail() {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(STORAGE_EMAIL_KEY) ?? "";
+}
+
+function getAuthRedirectOrigin() {
+  if (typeof window === "undefined") return PRODUCTION_AUTH_REDIRECT_ORIGIN;
+
+  const configuredOrigin =
+    process.env.NEXT_PUBLIC_AUTH_REDIRECT_ORIGIN?.trim().replace(/\/+$/, "");
+  if (configuredOrigin) return configuredOrigin;
+
+  const productionHostname = new URL(PRODUCTION_AUTH_REDIRECT_ORIGIN).hostname;
+  if (
+    window.location.hostname.endsWith(".vercel.app") &&
+    window.location.hostname !== productionHostname
+  ) {
+    return PRODUCTION_AUTH_REDIRECT_ORIGIN;
+  }
+
+  return window.location.origin;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -182,7 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const auth = getFirebaseAuth();
         await sendSignInLinkToEmail(auth, trimmed, {
-          url: window.location.origin,
+          url: getAuthRedirectOrigin(),
           handleCodeInApp: true,
         });
         window.localStorage.setItem(STORAGE_EMAIL_KEY, trimmed);
