@@ -39,7 +39,7 @@ function NotConfigured() {
 }
 
 function ProfileSetup() {
-  const { saveProfile, user, error: authError } = useAuth();
+  const { saveProfile, user, error: authError, profileLoading } = useAuth();
   const [name, setName] = useState("");
   const [initials, setInitials] = useState("");
   const [saving, setSaving] = useState(false);
@@ -85,6 +85,11 @@ function ProfileSetup() {
           placeholder="Initials (e.g. BG)"
           maxLength={4}
         />
+        {profileLoading ? (
+          <p className="text-sm text-cream-muted">
+            Checking for an existing profile...
+          </p>
+        ) : null}
         {error || authError ? (
           <p className="text-sm text-red-300">{error || authError}</p>
         ) : null}

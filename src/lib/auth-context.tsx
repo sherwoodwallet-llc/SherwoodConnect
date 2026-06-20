@@ -31,6 +31,7 @@ export type { ManagerProfile } from "./profile";
 type AuthContextValue = {
   configured: boolean;
   loading: boolean;
+  profileLoading: boolean;
   user: User | null;
   isMaster: boolean;
   profile: ManagerProfile | null;
@@ -48,13 +49,51 @@ type AuthContextValue = {
 };
 
 const STORAGE_EMAIL_KEY = "sherwood:pendingEmail";
+const PROFILE_CACHE_PREFIX = "sherwood:managerProfile:";
 const PRODUCTION_AUTH_REDIRECT_ORIGIN = "https://sherwood-connect.vercel.app";
+const AUTH_LOAD_TIMEOUT_MS = 4500;
+const PROFILE_LOAD_TIMEOUT_MS = 3500;
+const USE_PROFILE_API = process.env.NEXT_PUBLIC_PROFILE_API_ENABLED === "true";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function getStoredPendingEmail() {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(STORAGE_EMAIL_KEY) ?? "";
+}
+
+function profileCacheKey(uid: string) {
+  return `${PROFILE_CACHE_PREFIX}${uid}`;
+}
+
+function getCachedProfile(uid: string): ManagerProfile | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const cached = window.localStorage.getItem(profileCacheKey(uid));
+    if (!cached) return null;
+
+    const profile = JSON.parse(cached) as Partial<ManagerProfile>;
+    if (!profile.email || !profile.name || !profile.initials) return null;
+
+    return {
+      email: profile.email,
+      name: profile.name,
+      initials: profile.initials,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function setCachedProfile(uid: string, profile: ManagerProfile) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(profileCacheKey(uid), JSON.stringify(profile));
+  } catch {
+    // Cache is only a speed-up; ignore storage quota/private-mode failures.
+  }
 }
 
 function hasEmailLinkParams() {
@@ -82,6 +121,8 @@ function getAuthRedirectOrigin() {
 }
 
 async function readManagerProfile(current: User): Promise<ManagerProfile | null> {
+  if (!USE_PROFILE_API) return readManagerProfileFromFirestore(current);
+
   const token = await current.getIdToken();
   const response = await fetch("/api/profile", {
     method: "GET",
@@ -109,6 +150,8 @@ async function writeManagerProfile(
   current: User,
   payload: Pick<ManagerProfile, "name" | "initials">,
 ): Promise<ManagerProfile> {
+  if (!USE_PROFILE_API) return writeManagerProfileToFirestore(current, payload);
+
   const token = await current.getIdToken();
   const response = await fetch("/api/profile", {
     method: "PUT",
@@ -170,10 +213,23 @@ async function writeManagerProfileToFirestore(
   return profile;
 }
 
+function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const id = window.setTimeout(
+      () => reject(new Error(message)),
+      PROFILE_LOAD_TIMEOUT_MS,
+    );
+    promise
+      .then(resolve, reject)
+      .finally(() => window.clearTimeout(id));
+  });
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const configured = isFirebaseConfigured;
 
   const [loading, setLoading] = useState(configured);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<ManagerProfile | null>(null);
   const [linkSent, setLinkSent] = useState(() =>
@@ -193,13 +249,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadProfile = useCallback(async (current: User) => {
+    setProfileLoading(true);
+    const profilePromise = readManagerProfile(current);
+
     try {
-      const nextProfile = await readManagerProfile(current);
+      const nextProfile = await withTimeout(
+        profilePromise,
+        "Profile is taking too long to load. You can continue setup or refresh.",
+      );
       setProfile(nextProfile);
+      if (nextProfile) setCachedProfile(current.uid, nextProfile);
       setError(null);
     } catch (err) {
-      setProfile(null);
       setError(err instanceof Error ? err.message : "Could not load profile.");
+      profilePromise
+        .then((nextProfile) => {
+          setProfile(nextProfile);
+          if (nextProfile) setCachedProfile(current.uid, nextProfile);
+          setError(null);
+        })
+        .catch(() => undefined);
+    } finally {
+      setProfileLoading(false);
     }
   }, []);
 
@@ -236,47 +307,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!configured) {
-      setLoading(false);
       return;
     }
 
     const storedEmail = readPendingEmail();
     const auth = getFirebaseAuth();
-    let settled = false;
+    let cancelled = false;
+    let authResolved = false;
 
-    const finishLoading = () => {
-      if (!settled) {
-        settled = true;
-        setLoading(false);
-      }
-    };
+    const authTimeout = window.setTimeout(() => {
+      if (cancelled || authResolved) return;
+      setLoading(false);
+      setError(
+        "Login is taking too long. Refresh the page or request a new link.",
+      );
+    }, AUTH_LOAD_TIMEOUT_MS);
 
-    // Never leave the app stuck on the loading screen.
-    const timeoutId = window.setTimeout(finishLoading, 5000);
-
-    // Register the auth listener immediately — do not wait on email-link completion.
-    const unsub = onAuthStateChanged(auth, async (next) => {
+    // Register the auth listener immediately. Profile loading must not block it.
+    const unsub = onAuthStateChanged(auth, (next) => {
+      if (cancelled) return;
+      authResolved = true;
+      window.clearTimeout(authTimeout);
       setUser(next);
-      try {
-        if (next) {
-          await loadProfile(next);
-          setLinkSent(false);
-          setEmailLinkInUrl(false);
-          setPendingEmail("");
-          window.localStorage.removeItem(STORAGE_EMAIL_KEY);
-        } else {
-          setProfile(null);
-        }
-      } finally {
-        finishLoading();
+      setLoading(false);
+
+      if (next) {
+        const cached = getCachedProfile(next.uid);
+        if (cached) setProfile(cached);
+
+        setLinkSent(false);
+        setEmailLinkInUrl(false);
+        setPendingEmail("");
+        window.localStorage.removeItem(STORAGE_EMAIL_KEY);
+        void loadProfile(next);
+      } else {
+        setProfile(null);
+        setProfileLoading(false);
       }
     });
 
-    // Finish magic-link sign-in in parallel if the URL contains a link.
-    void completeSignInFromUrl(storedEmail || undefined);
+    queueMicrotask(() => {
+      void completeSignInFromUrl(storedEmail || undefined);
+    });
 
     return () => {
-      window.clearTimeout(timeoutId);
+      cancelled = true;
+      window.clearTimeout(authTimeout);
       unsub();
     };
   }, [configured, completeSignInFromUrl, loadProfile, readPendingEmail]);
@@ -347,6 +423,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
       const nextProfile = await writeManagerProfile(user, payload);
       setProfile(nextProfile);
+      setCachedProfile(user.uid, nextProfile);
       setError(null);
     },
     [user],
@@ -374,7 +451,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const current = auth.currentUser;
       if (current) {
         setUser(current);
-        await loadProfile(current);
+        const cached = getCachedProfile(current.uid);
+        if (cached) setProfile(cached);
+        void loadProfile(current);
         setLinkSent(false);
         setEmailLinkInUrl(false);
         setPendingEmail("");
@@ -412,6 +491,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       configured,
       loading,
+      profileLoading,
       user,
       isMaster,
       profile,
@@ -430,6 +510,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       configured,
       loading,
+      profileLoading,
       user,
       isMaster,
       profile,
