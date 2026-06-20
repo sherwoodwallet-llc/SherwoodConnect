@@ -236,40 +236,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!configured) {
+      setLoading(false);
       return;
     }
 
     const storedEmail = readPendingEmail();
-
     const auth = getFirebaseAuth();
-    let cancelled = false;
-    let unsub: (() => void) | undefined;
+    let settled = false;
 
-    queueMicrotask(() => {
-      completeSignInFromUrl(storedEmail || undefined).finally(() => {
-        if (cancelled) return;
-        unsub = onAuthStateChanged(auth, async (next) => {
-          setUser(next);
-          try {
-            if (next) {
-              await loadProfile(next);
-              setLinkSent(false);
-              setEmailLinkInUrl(false);
-              setPendingEmail("");
-              window.localStorage.removeItem(STORAGE_EMAIL_KEY);
-            } else {
-              setProfile(null);
-            }
-          } finally {
-            setLoading(false);
-          }
-        });
-      });
+    const finishLoading = () => {
+      if (!settled) {
+        settled = true;
+        setLoading(false);
+      }
+    };
+
+    // Never leave the app stuck on the loading screen.
+    const timeoutId = window.setTimeout(finishLoading, 5000);
+
+    // Register the auth listener immediately — do not wait on email-link completion.
+    const unsub = onAuthStateChanged(auth, async (next) => {
+      setUser(next);
+      try {
+        if (next) {
+          await loadProfile(next);
+          setLinkSent(false);
+          setEmailLinkInUrl(false);
+          setPendingEmail("");
+          window.localStorage.removeItem(STORAGE_EMAIL_KEY);
+        } else {
+          setProfile(null);
+        }
+      } finally {
+        finishLoading();
+      }
     });
 
+    // Finish magic-link sign-in in parallel if the URL contains a link.
+    void completeSignInFromUrl(storedEmail || undefined);
+
     return () => {
-      cancelled = true;
-      if (unsub) unsub();
+      window.clearTimeout(timeoutId);
+      unsub();
     };
   }, [configured, completeSignInFromUrl, loadProfile, readPendingEmail]);
 
