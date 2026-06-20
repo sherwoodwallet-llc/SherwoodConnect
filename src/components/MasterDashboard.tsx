@@ -52,7 +52,7 @@ export function MasterDashboard() {
     if (!user) return;
     const unsub = subscribeLogs(
       "all",
-      user.uid,
+      user.id,
       (next) => {
         setLogs(next);
         setLogsLoading(false);

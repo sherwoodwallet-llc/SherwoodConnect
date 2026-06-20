@@ -51,7 +51,7 @@ export function ManagerDashboard() {
     });
     const unsub = subscribeLogs(
       "own",
-      user.uid,
+      user.id,
       (next) => {
         if (!active) return;
         setLogs(next);
@@ -96,7 +96,7 @@ export function ManagerDashboard() {
     try {
       await addLog({
         data: entry,
-        uid: user.uid,
+        uid: user.id,
         email: user.email ?? "",
         profile,
       });

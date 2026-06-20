@@ -24,11 +24,11 @@ function NotConfigured() {
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">
         Sherwood Connect
       </h1>
-      <h2 className="mt-6 text-lg font-semibold text-gold">Firebase not connected</h2>
+      <h2 className="mt-6 text-lg font-semibold text-gold">Supabase not connected</h2>
       <p className="mt-2 text-sm leading-6 text-cream-muted">
-        Add your Firebase web config (the{" "}
+        Add your Supabase project values (the{" "}
         <code className="rounded bg-cream/10 px-1.5 py-0.5 text-cream">
-          NEXT_PUBLIC_FIREBASE_*
+          NEXT_PUBLIC_SUPABASE_*
         </code>{" "}
         keys) to{" "}
         <code className="rounded bg-cream/10 px-1.5 py-0.5 text-cream">.env.local</code>{" "}
@@ -204,14 +204,12 @@ function EmailSentView() {
 }
 
 function CompleteEmailLinkView() {
-  const { completeLink, error, pendingEmail, resetLogin } = useAuth();
-  const [email, setEmail] = useState(pendingEmail);
+  const { completeLink, error, resetLogin } = useAuth();
   const [checking, setChecking] = useState(false);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleContinue() {
     setChecking(true);
-    await completeLink(email);
+    await completeLink();
     setChecking(false);
   }
 
@@ -224,35 +222,16 @@ function CompleteEmailLinkView() {
         Complete login
       </h1>
       <p className="mt-2 text-sm leading-6 text-cream-muted">
-        If you started login in another tab, go back to the original Sherwood
-        Connect login page to finish setting up your account.
-      </p>
-      <p className="mt-2 text-sm leading-6 text-cream-muted">
-        You can also finish here by entering the email address that received
-        this sign-in link.
+        We are verifying your secure sign-in link. For security, open the link
+        in the same browser where you requested it.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <label className="relative block">
-          <Mail
-            className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-cream-muted"
-            size={17}
-          />
-          <input
-            className="field w-full"
-            style={{ paddingLeft: "2.6rem" }}
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="you@example.com"
-            autoComplete="email"
-          />
-        </label>
-
+      <div className="mt-6 space-y-4">
         {error ? <p className="text-sm text-red-300">{error}</p> : null}
 
         <button
-          type="submit"
+          type="button"
+          onClick={handleContinue}
           disabled={checking}
           className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink disabled:opacity-50"
         >
@@ -276,7 +255,7 @@ function CompleteEmailLinkView() {
         >
           Back to login page
         </button>
-      </form>
+      </div>
     </Shell>
   );
 }

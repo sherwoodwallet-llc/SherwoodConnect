@@ -1,18 +1,8 @@
-import {
-  addDoc,
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  where,
-  type Timestamp,
-} from "firebase/firestore";
-import { getDb } from "./firebase";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import { getSupabase } from "./supabase";
 import { submitToGoogleSheets } from "./googleSheets";
 import type { ManagerProfile } from "./profile";
 
-// Columns the manager fills in. "Manager Initials" is attributed automatically.
 export const LOG_COLUMNS = [
   "Church Name",
   "Phone Number",
@@ -22,7 +12,6 @@ export const LOG_COLUMNS = [
 
 export const MANAGER_COLUMN = "Manager Initials";
 
-// Full sheet header order (matches the Google Sheet).
 export const SHEET_COLUMNS = [
   "Church Name",
   "Phone Number",
@@ -42,15 +31,15 @@ export type OutreachLog = {
   createdAt: Date | null;
 };
 
-type RawLog = {
-  data?: LogData;
-  ownerUid?: string;
-  ownerEmail?: string;
-  ownerName?: string;
-  createdAt?: Timestamp | null;
+type LogRow = {
+  id: string;
+  data: LogData | null;
+  owner_uid: string;
+  owner_email: string;
+  owner_name: string;
+  created_at: string | null;
 };
 
-// Write a log to Firestore (owner-stamped) and mirror it to the Google Sheet.
 export async function addLog(args: {
   data: LogData;
   uid: string;
@@ -58,71 +47,109 @@ export async function addLog(args: {
   profile: ManagerProfile | null;
 }): Promise<void> {
   const { data, uid, email, profile } = args;
-
   const initials = profile?.initials || email.slice(0, 2).toUpperCase();
   const ownerName = profile?.name || email;
-
   const fullData: LogData = { ...data, [MANAGER_COLUMN]: initials };
 
-  await addDoc(collection(getDb(), "logs"), {
+  const { error } = await getSupabase().from("outreach_logs").insert({
     data: fullData,
-    ownerUid: uid,
-    ownerEmail: email,
-    ownerName,
-    createdAt: serverTimestamp(),
+    owner_uid: uid,
+    owner_email: email,
+    owner_name: ownerName,
   });
+  if (error) throw error;
 
-  // Mirror to the shared Google Sheet. Non-fatal if the webhook is down.
   try {
     await submitToGoogleSheets(fullData);
-  } catch (error) {
-    console.error("Google Sheets mirror failed", error);
+  } catch (sheetError) {
+    console.error("Google Sheets mirror failed", sheetError);
   }
 }
 
-function mapDoc(id: string, raw: RawLog): OutreachLog {
+function mapRow(row: LogRow): OutreachLog {
   return {
-    id,
-    data: raw.data ?? {},
-    ownerUid: raw.ownerUid ?? "",
-    ownerEmail: raw.ownerEmail ?? "",
-    ownerName: raw.ownerName ?? "",
-    createdAt: raw.createdAt ? raw.createdAt.toDate() : null,
+    id: row.id,
+    data: row.data ?? {},
+    ownerUid: row.owner_uid,
+    ownerEmail: row.owner_email,
+    ownerName: row.owner_name,
+    createdAt: row.created_at ? new Date(row.created_at) : null,
   };
 }
 
-function sortByCreatedDesc(logs: OutreachLog[]): OutreachLog[] {
-  return [...logs].sort((a, b) => {
-    const aTime = a.createdAt ? a.createdAt.getTime() : 0;
-    const bTime = b.createdAt ? b.createdAt.getTime() : 0;
-    return bTime - aTime;
-  });
+function sortByCreatedDesc(logs: OutreachLog[]) {
+  return [...logs].sort(
+    (a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0),
+  );
 }
 
-// Live listener. scope "all" (master) returns every log; "own" filters to uid.
 export function subscribeLogs(
   scope: "own" | "all",
   uid: string,
   onData: (logs: OutreachLog[]) => void,
   onError?: (error: Error) => void,
 ): () => void {
-  const logsRef = collection(getDb(), "logs");
+  const supabase = getSupabase();
+  let active = true;
+  let current: OutreachLog[] = [];
 
-  // "own" filters by owner (sorted client-side to avoid a composite index);
-  // "all" orders by createdAt (single-field index).
-  const q =
-    scope === "all"
-      ? query(logsRef, orderBy("createdAt", "desc"))
-      : query(logsRef, where("ownerUid", "==", uid));
+  const emit = (rows: OutreachLog[]) => {
+    current = sortByCreatedDesc(rows);
+    onData(current);
+  };
 
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const logs = snapshot.docs.map((d) => mapDoc(d.id, d.data() as RawLog));
-      onData(scope === "all" ? logs : sortByCreatedDesc(logs));
-    },
-    (error) => {
-      if (onError) onError(error);
-    },
-  );
+  const query = supabase
+    .from("outreach_logs")
+    .select("id, data, owner_uid, owner_email, owner_name, created_at")
+    .order("created_at", { ascending: false });
+
+  const initialRequest =
+    scope === "own" ? query.eq("owner_uid", uid) : query;
+
+  void initialRequest.then(({ data, error }) => {
+    if (!active) return;
+    if (error) {
+      onError?.(error);
+      return;
+    }
+    emit(((data ?? []) as LogRow[]).map(mapRow));
+  });
+
+  const channelConfig = {
+    event: "*" as const,
+    schema: "public",
+    table: "outreach_logs",
+    ...(scope === "own" ? { filter: `owner_uid=eq.${uid}` } : {}),
+  };
+
+  const channel = supabase
+    .channel(`outreach-logs-${scope}-${uid}`)
+    .on(
+      "postgres_changes",
+      channelConfig,
+      (payload: RealtimePostgresChangesPayload<LogRow>) => {
+        if (!active) return;
+        if (payload.eventType === "INSERT") {
+          emit([mapRow(payload.new), ...current.filter((log) => log.id !== payload.new.id)]);
+        } else if (payload.eventType === "UPDATE") {
+          emit(
+            current.map((log) =>
+              log.id === payload.new.id ? mapRow(payload.new) : log,
+            ),
+          );
+        } else if (payload.eventType === "DELETE") {
+          emit(current.filter((log) => log.id !== payload.old.id));
+        }
+      },
+    )
+    .subscribe((status) => {
+      if (status === "CHANNEL_ERROR") {
+        onError?.(new Error("Could not connect to live log updates."));
+      }
+    });
+
+  return () => {
+    active = false;
+    void supabase.removeChannel(channel);
+  };
 }

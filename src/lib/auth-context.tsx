@@ -9,21 +9,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { EmailOtpType, User } from "@supabase/supabase-js";
 import {
-  isSignInWithEmailLink,
-  onAuthStateChanged,
-  sendSignInLinkToEmail,
-  signInWithEmailLink,
-  signOut,
-  type User,
-} from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import {
-  getDb,
-  getFirebaseAuth,
-  isFirebaseConfigured,
+  getSupabase,
+  isSupabaseConfigured,
   MASTER_EMAIL,
-} from "./firebase";
+} from "./supabase";
 import type { ManagerProfile } from "./profile";
 
 export type { ManagerProfile } from "./profile";
@@ -41,7 +32,7 @@ type AuthContextValue = {
   pendingEmail: string;
   error: string | null;
   sendLink: (email: string) => Promise<void>;
-  completeLink: (email: string) => Promise<boolean>;
+  completeLink: () => Promise<boolean>;
   saveProfile: (name: string, initials: string) => Promise<void>;
   resetLogin: () => void;
   refreshSession: (options?: { silent?: boolean }) => Promise<boolean>;
@@ -51,9 +42,7 @@ type AuthContextValue = {
 const STORAGE_EMAIL_KEY = "sherwood:pendingEmail";
 const PROFILE_CACHE_PREFIX = "sherwood:managerProfile:";
 const PRODUCTION_AUTH_REDIRECT_ORIGIN = "https://sherwood-connect.vercel.app";
-const AUTH_LOAD_TIMEOUT_MS = 4500;
-const PROFILE_LOAD_TIMEOUT_MS = 3500;
-const USE_PROFILE_API = process.env.NEXT_PUBLIC_PROFILE_API_ENABLED === "true";
+const PROFILE_LOAD_TIMEOUT_MS = 5000;
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -72,10 +61,8 @@ function getCachedProfile(uid: string): ManagerProfile | null {
   try {
     const cached = window.localStorage.getItem(profileCacheKey(uid));
     if (!cached) return null;
-
     const profile = JSON.parse(cached) as Partial<ManagerProfile>;
     if (!profile.email || !profile.name || !profile.initials) return null;
-
     return {
       email: profile.email,
       name: profile.name,
@@ -88,128 +75,69 @@ function getCachedProfile(uid: string): ManagerProfile | null {
 
 function setCachedProfile(uid: string, profile: ManagerProfile) {
   if (typeof window === "undefined") return;
-
   try {
     window.localStorage.setItem(profileCacheKey(uid), JSON.stringify(profile));
   } catch {
-    // Cache is only a speed-up; ignore storage quota/private-mode failures.
+    // This cache is optional.
   }
 }
 
-function hasEmailLinkParams() {
+function hasAuthCallbackParams() {
   if (typeof window === "undefined") return false;
-  const params = new URL(window.location.href).searchParams;
-  return params.get("mode") === "signIn" && params.has("oobCode");
+  const url = new URL(window.location.href);
+  return (
+    url.searchParams.has("code") ||
+    url.searchParams.has("token_hash") ||
+    url.hash.includes("access_token=")
+  );
 }
 
-function getAuthRedirectOrigin() {
+function clearAuthUrl() {
+  if (typeof window === "undefined") return;
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+function getAuthRedirectUrl() {
   if (typeof window === "undefined") return PRODUCTION_AUTH_REDIRECT_ORIGIN;
-
-  const configuredOrigin =
+  const configured =
     process.env.NEXT_PUBLIC_AUTH_REDIRECT_ORIGIN?.trim().replace(/\/+$/, "");
-  if (configuredOrigin) return configuredOrigin;
-
-  const productionHostname = new URL(PRODUCTION_AUTH_REDIRECT_ORIGIN).hostname;
-  if (
-    window.location.hostname.endsWith(".vercel.app") &&
-    window.location.hostname !== productionHostname
-  ) {
-    return PRODUCTION_AUTH_REDIRECT_ORIGIN;
-  }
-
-  return window.location.origin;
+  return configured || window.location.origin;
 }
 
-async function readManagerProfile(current: User): Promise<ManagerProfile | null> {
-  if (!USE_PROFILE_API) return readManagerProfileFromFirestore(current);
+async function readManagerProfile(user: User): Promise<ManagerProfile | null> {
+  const { data, error } = await getSupabase()
+    .from("manager_profiles")
+    .select("email, name, initials")
+    .eq("user_id", user.id)
+    .maybeSingle();
 
-  const token = await current.getIdToken();
-  const response = await fetch("/api/profile", {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  }).catch(() => null);
-
-  if (!response) return readManagerProfileFromFirestore(current);
-
-  const data = (await response.json().catch(() => ({}))) as {
-    profile?: ManagerProfile | null;
-    error?: string;
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    email: data.email || user.email || "",
+    name: data.name || "",
+    initials: data.initials || "",
   };
-
-  if (response.status >= 500) return readManagerProfileFromFirestore(current);
-
-  if (!response.ok) {
-    throw new Error(data.error || "Could not load profile.");
-  }
-
-  return data.profile ?? null;
 }
 
 async function writeManagerProfile(
-  current: User,
-  payload: Pick<ManagerProfile, "name" | "initials">,
-): Promise<ManagerProfile> {
-  if (!USE_PROFILE_API) return writeManagerProfileToFirestore(current, payload);
-
-  const token = await current.getIdToken();
-  const response = await fetch("/api/profile", {
-    method: "PUT",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  }).catch(() => null);
-
-  if (!response) return writeManagerProfileToFirestore(current, payload);
-
-  const data = (await response.json().catch(() => ({}))) as {
-    profile?: ManagerProfile;
-    error?: string;
-  };
-
-  if (response.status >= 500) {
-    return writeManagerProfileToFirestore(current, payload);
-  }
-
-  if (!response.ok || !data.profile) {
-    throw new Error(data.error || "Could not save profile.");
-  }
-
-  return data.profile;
-}
-
-async function readManagerProfileFromFirestore(
-  current: User,
-): Promise<ManagerProfile | null> {
-  const ref = doc(getDb(), "managers", current.uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-
-  const data = snap.data() as Partial<ManagerProfile>;
-  return {
-    email: data.email ?? current.email ?? "",
-    name: data.name ?? "",
-    initials: data.initials ?? "",
-  };
-}
-
-async function writeManagerProfileToFirestore(
-  current: User,
+  user: User,
   payload: Pick<ManagerProfile, "name" | "initials">,
 ): Promise<ManagerProfile> {
   const profile: ManagerProfile = {
-    email: current.email ?? "",
+    email: user.email ?? "",
     ...payload,
   };
-
-  await setDoc(
-    doc(getDb(), "managers", current.uid),
-    { ...profile, createdAt: serverTimestamp() },
-    { merge: true },
+  const { error } = await getSupabase().from("manager_profiles").upsert(
+    {
+      user_id: user.id,
+      email: profile.email,
+      name: profile.name,
+      initials: profile.initials,
+    },
+    { onConflict: "user_id" },
   );
-
+  if (error) throw error;
   return profile;
 }
 
@@ -219,15 +147,21 @@ function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
       () => reject(new Error(message)),
       PROFILE_LOAD_TIMEOUT_MS,
     );
-    promise
-      .then(resolve, reject)
-      .finally(() => window.clearTimeout(id));
+    promise.then(resolve, reject).finally(() => window.clearTimeout(id));
   });
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const configured = isFirebaseConfigured;
+const OTP_TYPES = new Set<EmailOtpType>([
+  "email",
+  "signup",
+  "invite",
+  "magiclink",
+  "recovery",
+  "email_change",
+]);
 
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const configured = isSupabaseConfigured;
   const [loading, setLoading] = useState(configured);
   const [profileLoading, setProfileLoading] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -235,37 +169,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [linkSent, setLinkSent] = useState(() =>
     Boolean(getStoredPendingEmail()),
   );
-  const [emailLinkInUrl, setEmailLinkInUrl] = useState(hasEmailLinkParams);
+  const [emailLinkInUrl, setEmailLinkInUrl] = useState(hasAuthCallbackParams);
   const [pendingEmail, setPendingEmail] = useState(getStoredPendingEmail);
   const [error, setError] = useState<string | null>(null);
 
-  const readPendingEmail = useCallback(() => {
-    return getStoredPendingEmail();
-  }, []);
-
-  const clearSignInUrl = useCallback(() => {
-    if (typeof window === "undefined") return;
-    window.history.replaceState({}, document.title, window.location.pathname);
-  }, []);
-
   const loadProfile = useCallback(async (current: User) => {
     setProfileLoading(true);
-    const profilePromise = readManagerProfile(current);
-
+    const request = readManagerProfile(current);
     try {
-      const nextProfile = await withTimeout(
-        profilePromise,
-        "Profile is taking too long to load. You can continue setup or refresh.",
-      );
-      setProfile(nextProfile);
-      if (nextProfile) setCachedProfile(current.uid, nextProfile);
+      const next = await withTimeout(request, "Profile is taking too long to load.");
+      setProfile(next);
+      if (next) setCachedProfile(current.id, next);
       setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load profile.");
-      profilePromise
-        .then((nextProfile) => {
-          setProfile(nextProfile);
-          if (nextProfile) setCachedProfile(current.uid, nextProfile);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "Could not load profile.",
+      );
+      request
+        .then((next) => {
+          setProfile(next);
+          if (next) setCachedProfile(current.id, next);
           setError(null);
         })
         .catch(() => undefined);
@@ -274,135 +197,127 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Complete a magic-link sign-in if the user arrived from their email.
-  const completeSignInFromUrl = useCallback(
-    async (emailOverride?: string) => {
-      if (!configured) return false;
-      const auth = getFirebaseAuth();
-      if (typeof window === "undefined") return false;
-      const isEmailLink = isSignInWithEmailLink(auth, window.location.href);
-      setEmailLinkInUrl(isEmailLink || hasEmailLinkParams());
-      if (!isEmailLink) return false;
-
-      const email = (emailOverride || readPendingEmail()).trim().toLowerCase();
-      if (!email) return false;
-
-      try {
-        await signInWithEmailLink(auth, email, window.location.href);
-        window.localStorage.removeItem(STORAGE_EMAIL_KEY);
-        setPendingEmail("");
-        setLinkSent(false);
-        setEmailLinkInUrl(false);
-        clearSignInUrl();
-        return true;
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Could not complete sign-in.",
-        );
-        return false;
-      }
-    },
-    [clearSignInUrl, configured, readPendingEmail],
-  );
-
-  useEffect(() => {
-    if (!configured) {
-      return;
-    }
-
-    const storedEmail = readPendingEmail();
-    const auth = getFirebaseAuth();
-    let cancelled = false;
-    let authResolved = false;
-
-    const authTimeout = window.setTimeout(() => {
-      if (cancelled || authResolved) return;
-      setLoading(false);
-      setError(
-        "Login is taking too long. Refresh the page or request a new link.",
-      );
-    }, AUTH_LOAD_TIMEOUT_MS);
-
-    // Register the auth listener immediately. Profile loading must not block it.
-    const unsub = onAuthStateChanged(auth, (next) => {
-      if (cancelled) return;
-      authResolved = true;
-      window.clearTimeout(authTimeout);
+  const acceptUser = useCallback(
+    (next: User | null) => {
       setUser(next);
       setLoading(false);
-
-      if (next) {
-        const cached = getCachedProfile(next.uid);
-        if (cached) setProfile(cached);
-
-        setLinkSent(false);
-        setEmailLinkInUrl(false);
-        setPendingEmail("");
-        window.localStorage.removeItem(STORAGE_EMAIL_KEY);
-        void loadProfile(next);
-      } else {
+      if (!next) {
         setProfile(null);
         setProfileLoading(false);
+        return;
       }
+
+      const cached = getCachedProfile(next.id);
+      if (cached) setProfile(cached);
+      setLinkSent(false);
+      setEmailLinkInUrl(false);
+      setPendingEmail("");
+      window.localStorage.removeItem(STORAGE_EMAIL_KEY);
+      void loadProfile(next);
+    },
+    [loadProfile],
+  );
+
+  const completeSignInFromUrl = useCallback(async () => {
+    if (!configured || typeof window === "undefined") return false;
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    const tokenHash = url.searchParams.get("token_hash");
+    const rawType = url.searchParams.get("type");
+    const supabase = getSupabase();
+
+    try {
+      if (code) {
+        const { error: exchangeError } =
+          await supabase.auth.exchangeCodeForSession(code);
+        if (exchangeError) throw exchangeError;
+      } else if (tokenHash && rawType && OTP_TYPES.has(rawType as EmailOtpType)) {
+        const { error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: rawType as EmailOtpType,
+        });
+        if (verifyError) throw verifyError;
+      }
+
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!data.session?.user) return false;
+
+      clearAuthUrl();
+      acceptUser(data.session.user);
+      return true;
+    } catch (signInError) {
+      setError(
+        signInError instanceof Error
+          ? signInError.message
+          : "Could not complete sign-in.",
+      );
+      setLoading(false);
+      return false;
+    }
+  }, [acceptUser, configured]);
+
+  useEffect(() => {
+    if (!configured) return;
+    let cancelled = false;
+    const supabase = getSupabase();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return;
+      queueMicrotask(() => acceptUser(session?.user ?? null));
     });
 
-    queueMicrotask(() => {
-      void completeSignInFromUrl(storedEmail || undefined);
+    queueMicrotask(async () => {
+      if (hasAuthCallbackParams()) {
+        setEmailLinkInUrl(true);
+        const completed = await completeSignInFromUrl();
+        if (completed || cancelled) return;
+      }
+
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (sessionError) setError(sessionError.message);
+      acceptUser(data.session?.user ?? null);
     });
 
     return () => {
       cancelled = true;
-      window.clearTimeout(authTimeout);
-      unsub();
+      subscription.unsubscribe();
     };
-  }, [configured, completeSignInFromUrl, loadProfile, readPendingEmail]);
+  }, [acceptUser, completeSignInFromUrl, configured]);
 
-  const sendLink = useCallback(
-    async (email: string) => {
-      setError(null);
-      const trimmed = email.trim().toLowerCase();
-      if (!trimmed) {
-        setError("Enter your email.");
-        return;
-      }
-      try {
-        const auth = getFirebaseAuth();
-        await sendSignInLinkToEmail(auth, trimmed, {
-          url: getAuthRedirectOrigin(),
-          handleCodeInApp: true,
-        });
-        window.localStorage.setItem(STORAGE_EMAIL_KEY, trimmed);
-        setPendingEmail(trimmed);
-        setLinkSent(true);
-      } catch (err) {
-        const code =
-          err && typeof err === "object" && "code" in err
-            ? String((err as { code: string }).code)
-            : "";
-        if (code === "auth/configuration-not-found") {
-          setError(
-            "Email link sign-in is not enabled yet. In Firebase console: Authentication → Sign-in method → Email/Password → enable it, then turn on Email link (passwordless sign-in).",
-          );
-        } else {
-          setError(
-            err instanceof Error ? err.message : "Could not send the sign-in link.",
-          );
-        }
-      }
-    },
-    [],
-  );
+  const sendLink = useCallback(async (email: string) => {
+    setError(null);
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) {
+      setError("Enter your email.");
+      return;
+    }
+
+    const { error: signInError } = await getSupabase().auth.signInWithOtp({
+      email: trimmed,
+      options: {
+        emailRedirectTo: getAuthRedirectUrl(),
+        shouldCreateUser: true,
+      },
+    });
+
+    if (signInError) {
+      setError(signInError.message);
+      return;
+    }
+
+    window.localStorage.setItem(STORAGE_EMAIL_KEY, trimmed);
+    setPendingEmail(trimmed);
+    setLinkSent(true);
+  }, []);
 
   const completeLink = useCallback(
-    async (email: string) => {
+    async () => {
       setError(null);
-      const trimmed = email.trim().toLowerCase();
-      if (!trimmed) {
-        setError("Enter the email address that received this sign-in link.");
-        return false;
-      }
-
-      const completed = await completeSignInFromUrl(trimmed);
+      const completed = await completeSignInFromUrl();
       if (!completed) {
         setError((current) =>
           current ||
@@ -421,9 +336,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         name: name.trim(),
         initials: initials.trim().toUpperCase(),
       };
-      const nextProfile = await writeManagerProfile(user, payload);
-      setProfile(nextProfile);
-      setCachedProfile(user.uid, nextProfile);
+      const next = await writeManagerProfile(user, payload);
+      setProfile(next);
+      setCachedProfile(user.id, next);
       setError(null);
     },
     [user],
@@ -435,44 +350,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPendingEmail("");
     setError(null);
     window.localStorage.removeItem(STORAGE_EMAIL_KEY);
-    clearSignInUrl();
-  }, [clearSignInUrl]);
+    clearAuthUrl();
+  }, []);
 
   const refreshSession = useCallback(
     async (options?: { silent?: boolean }) => {
       if (!options?.silent) setError(null);
-      const auth = getFirebaseAuth();
+      const completed = await completeSignInFromUrl();
+      if (completed) return true;
 
-      const completed = await completeSignInFromUrl(
-        pendingEmail || readPendingEmail(),
-      );
-      if (completed && auth.currentUser) return true;
-
-      const current = auth.currentUser;
-      if (current) {
-        setUser(current);
-        const cached = getCachedProfile(current.uid);
-        if (cached) setProfile(cached);
-        void loadProfile(current);
-        setLinkSent(false);
-        setEmailLinkInUrl(false);
-        setPendingEmail("");
-        window.localStorage.removeItem(STORAGE_EMAIL_KEY);
+      const { data, error: sessionError } = await getSupabase().auth.getSession();
+      if (data.session?.user) {
+        acceptUser(data.session.user);
         return true;
       }
-
       if (!options?.silent) {
         setError(
-          "Not signed in yet. Open the link in your email on this device, then try again.",
+          sessionError?.message ||
+            "Not signed in yet. Open the link in your email, then try again.",
         );
       }
       return false;
     },
-    [completeSignInFromUrl, loadProfile, pendingEmail, readPendingEmail],
+    [acceptUser, completeSignInFromUrl],
   );
 
   const signOutUser = useCallback(async () => {
-    await signOut(getFirebaseAuth());
+    const { error: signOutError } = await getSupabase().auth.signOut();
+    if (signOutError) throw signOutError;
+    setUser(null);
     setProfile(null);
     setLinkSent(false);
     setPendingEmail("");
@@ -480,9 +386,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isMaster = Boolean(
-    user?.email && user.email.toLowerCase() === MASTER_EMAIL.toLowerCase(),
+    user?.email && user.email.toLowerCase() === MASTER_EMAIL,
   );
-
   const needsProfile = Boolean(
     user && !isMaster && (!profile || !profile.name || !profile.initials),
   );
@@ -532,7 +437,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
-  return ctx;
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
+  return context;
 }
