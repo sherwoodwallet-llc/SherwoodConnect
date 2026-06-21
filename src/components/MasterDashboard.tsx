@@ -62,7 +62,7 @@ export function MasterDashboard() {
     return () => unsub();
   }, [user]);
 
-  // Church pipeline snapshot from the Google Sheet.
+  // Organization pipeline snapshot from the private Google Sheet.
   async function loadSheet(showSpinner = false) {
     if (showSpinner) setSheetLoading(true);
     try {
@@ -132,13 +132,13 @@ export function MasterDashboard() {
     <main className="ops-bg min-h-screen px-4 py-8 text-cream sm:px-6">
       <div className="pointer-events-none fixed inset-0 grid-overlay opacity-60" />
       <div className="relative mx-auto max-w-6xl space-y-6">
-        <AppHeader subtitle="Master view: every manager's logs, the live church pipeline, and team metrics." />
+        <AppHeader subtitle="Master view: every manager's logs, the private organization pipeline, and team metrics." />
 
         <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Metric value={metrics.totalLogs} label="Total logs" />
           <Metric value={metrics.managers} label="Active managers" />
           <Metric value={metrics.meetings} label="Meetings booked" />
-          <Metric value={metrics.prospects} label="Church prospects" />
+          <Metric value={metrics.prospects} label="Organizations" />
         </section>
 
         <section className="rounded-3xl border border-line bg-panel/90 p-5">
@@ -211,7 +211,7 @@ export function MasterDashboard() {
         <section className="rounded-3xl border border-line bg-panel/90 p-5">
           <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Church pipeline</h2>
+              <h2 className="text-xl font-semibold">Organization pipeline</h2>
               <p className="mt-1 text-sm text-cream-muted">
                 {filteredRows.length} from the team spreadsheet
               </p>

@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { ArrowRight, CheckCircle2, Plus, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import {
   addLog,
+  checkOrganizationAvailability,
+  DETAIL_COLUMNS,
   LOG_COLUMNS,
+  ORGANIZATION_COLUMN,
   subscribeLogs,
   type LogData,
   type OutreachLog,
@@ -39,6 +42,8 @@ export function ManagerDashboard() {
   const [entry, setEntry] = useState<LogData>(emptyEntry);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [checkingOrganization, setCheckingOrganization] = useState(false);
+  const [approvedOrganization, setApprovedOrganization] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,15 +84,61 @@ export function ManagerDashboard() {
 
   function update(col: string, value: string) {
     setEntry((current) => ({ ...current, [col]: value }));
+    if (
+      col === ORGANIZATION_COLUMN &&
+      value.trim() !== approvedOrganization
+    ) {
+      setApprovedOrganization("");
+    }
     setError(null);
+  }
+
+  async function handleOrganizationCheck() {
+    const organization = entry[ORGANIZATION_COLUMN]?.trim();
+    if (!organization) {
+      setError("Enter an organization name first.");
+      return;
+    }
+
+    setCheckingOrganization(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const available = await checkOrganizationAvailability(organization);
+      if (!available) {
+        setApprovedOrganization("");
+        setError(
+          "This organization has already been entered. Please choose a different organization.",
+        );
+        return;
+      }
+      setEntry((current) => ({
+        ...current,
+        [ORGANIZATION_COLUMN]: organization,
+      }));
+      setApprovedOrganization(organization);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not check the organization.",
+      );
+    } finally {
+      setCheckingOrganization(false);
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user) return;
 
-    if (!entry["Church Name"]?.trim()) {
-      setError("Church / organization name is required.");
+    const organization = entry[ORGANIZATION_COLUMN]?.trim();
+    if (!organization) {
+      setError("Organization is required.");
+      return;
+    }
+    if (!approvedOrganization || approvedOrganization !== organization) {
+      setError("Check the organization before entering outreach details.");
       return;
     }
 
@@ -100,8 +151,9 @@ export function ManagerDashboard() {
         email: user.email ?? "",
         profile,
       });
-      const label = entry["Church Name"];
+      const label = entry[ORGANIZATION_COLUMN];
       setEntry(emptyEntry());
+      setApprovedOrganization("");
       setSuccess(`${label} logged.`);
       window.setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -115,7 +167,7 @@ export function ManagerDashboard() {
     <main className="ops-bg min-h-screen px-4 py-8 text-cream sm:px-6">
       <div className="pointer-events-none fixed inset-0 grid-overlay opacity-60" />
       <div className="relative mx-auto max-w-5xl space-y-6">
-        <AppHeader subtitle="Log your partner conversations. You only see the entries you create." />
+        <AppHeader subtitle="Check an organization before outreach so the team never contacts the same place twice." />
 
         <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
           <form
@@ -130,7 +182,53 @@ export function ManagerDashboard() {
             </div>
 
             <div className="space-y-4">
-              {LOG_COLUMNS.map((col) =>
+              <input
+                className="field"
+                value={entry[ORGANIZATION_COLUMN] ?? ""}
+                onChange={(event) =>
+                  update(ORGANIZATION_COLUMN, event.target.value)
+                }
+                placeholder="Organization"
+                disabled={Boolean(approvedOrganization)}
+                autoComplete="organization"
+              />
+
+              {!approvedOrganization ? (
+                <button
+                  type="button"
+                  onClick={handleOrganizationCheck}
+                  disabled={checkingOrganization}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-gold/50 px-5 py-3 text-sm font-semibold text-gold transition-colors hover:bg-gold/10 disabled:opacity-50"
+                >
+                  {checkingOrganization
+                    ? "Checking…"
+                    : "Check organization"}
+                  <ArrowRight size={17} />
+                </button>
+              ) : (
+                <div className="rounded-2xl border border-green-bright/30 bg-green-bright/10 px-4 py-3">
+                  <p className="flex items-center gap-2 text-sm font-medium text-green-bright">
+                    <CheckCircle2 size={16} />
+                    Organization is available
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApprovedOrganization("");
+                      setEntry((current) => ({
+                        ...emptyEntry(),
+                        [ORGANIZATION_COLUMN]:
+                          current[ORGANIZATION_COLUMN] ?? "",
+                      }));
+                    }}
+                    className="mt-1 text-xs text-cream-muted underline underline-offset-2 hover:text-cream"
+                  >
+                    Check a different organization
+                  </button>
+                </div>
+              )}
+
+              {approvedOrganization ? DETAIL_COLUMNS.map((col) =>
                 isLongFormColumn(col) ? (
                   <textarea
                     key={col}
@@ -148,7 +246,7 @@ export function ManagerDashboard() {
                     placeholder={col}
                   />
                 ),
-              )}
+              ) : null}
             </div>
 
             {error ? <p className="mt-4 text-sm text-red-300">{error}</p> : null}
@@ -158,14 +256,16 @@ export function ManagerDashboard() {
               </p>
             ) : null}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink disabled:opacity-50"
-            >
-              <Plus size={17} />
-              {submitting ? "Saving…" : "Add log"}
-            </button>
+            {approvedOrganization ? (
+              <button
+                type="submit"
+                disabled={submitting}
+                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink disabled:opacity-50"
+              >
+                <Plus size={17} />
+                {submitting ? "Saving…" : "Add organization"}
+              </button>
+            ) : null}
           </form>
 
           <section className="rounded-3xl border border-line bg-panel/90 p-5">

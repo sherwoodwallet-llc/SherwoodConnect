@@ -12,19 +12,16 @@
 //
 // This script is container-bound: it reads/writes the sheet it lives in.
 
-// Which tab holds the data. Leave as the first sheet, or set a name like "Church Call List".
+// Which tab holds the data. Leave as the first sheet, or set a name like "Organization Outreach".
 const DATA_SHEET_NAME = "";
 
 // Used only if the data tab is completely empty (no header row yet).
 const DEFAULT_HEADERS = [
-  "Church / Organization",
-  "Partner Contact",
-  "Contact Email",
-  "Contact Phone",
-  "Sherwood Manager",
-  "Status",
+  "Organization",
+  "Phone Number",
   "Notes",
-  "Date Contacted",
+  "Meeting Booked",
+  "Manager Initials",
 ];
 
 function getSheet_() {

@@ -2,13 +2,16 @@
 
 Next.js app for Sherwood manager outreach logs. Supabase provides passwordless
 email authentication, profiles, outreach logs, realtime updates, and row-level
-security. New users are asked for a name and initials after their first login.
+security. Managers check an organization name before entering outreach details;
+the database returns only availability and prevents duplicate organizations.
+New users are asked for a name and initials after their first login.
 
 ## Supabase setup
 
 1. Create a Supabase project.
-2. Open **SQL Editor**, paste
-   `supabase/migrations/20260620000000_initial_schema.sql`, and run it.
+2. Open **SQL Editor** and run the files in `supabase/migrations` in filename
+   order. Existing installations that already ran the initial schema only need
+   to run `20260620000001_organization_deduplication.sql`.
 3. In **Authentication → URL Configuration**, set:
    - Site URL: `https://sherwood-connect.vercel.app`
    - Redirect URLs: `http://localhost:3000/**` and
@@ -41,6 +44,19 @@ Add these environment variables to the Vercel project and redeploy:
 
 The publishable key is intended for browser use. Data access is protected by
 the row-level security policies in the migration.
+
+## Private spreadsheet mirror
+
+The Supabase database is the source of truth for duplicate prevention. Approved
+entries can also be mirrored into a private Google Sheet:
+
+1. Create a Google Sheet that only administrators can access.
+2. Add the script from `docs/google-apps-script.js` in **Extensions → Apps Script**.
+3. Deploy it as a web app that executes as the sheet owner.
+4. Add its `/exec` URL to Vercel as `GOOGLE_APPS_SCRIPT_WEBHOOK_URL`.
+
+The webhook URL stays server-side. Signed-in managers may append approved rows,
+but only the master account can read the spreadsheet through the application.
 
 ## Docker
 

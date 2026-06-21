@@ -1,3 +1,5 @@
+import { getSupabase } from "./supabase";
+
 export type SheetRow = Record<string, string>;
 
 export type SheetData = {
@@ -10,7 +12,15 @@ export type SheetData = {
 
 // READ the current sheet contents (headers + rows) through our API proxy.
 export async function fetchSheetData(): Promise<SheetData> {
-  const response = await fetch("/api/google-sheets", { cache: "no-store" });
+  const {
+    data: { session },
+  } = await getSupabase().auth.getSession();
+  const response = await fetch("/api/google-sheets", {
+    cache: "no-store",
+    headers: session
+      ? { Authorization: `Bearer ${session.access_token}` }
+      : undefined,
+  });
   const data = (await response.json()) as Partial<SheetData>;
 
   return {
@@ -26,9 +36,17 @@ export async function fetchSheetData(): Promise<SheetData> {
 export async function submitToGoogleSheets(
   entry: SheetRow,
 ): Promise<{ ok: boolean; configured: boolean }> {
+  const {
+    data: { session },
+  } = await getSupabase().auth.getSession();
   const response = await fetch("/api/google-sheets", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(session
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {}),
+    },
     body: JSON.stringify({ entry }),
   });
 

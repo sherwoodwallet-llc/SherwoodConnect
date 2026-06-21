@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { SEED_HEADERS, SEED_ROWS } from "@/data/churchSeed";
+import {
+  AuthError,
+  requireMasterUser,
+  requireSupabaseUser,
+} from "@/lib/server/supabase-auth";
 
 const WEBHOOK_URL =
   process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL ||
@@ -14,7 +19,30 @@ type PostBody = {
 };
 
 // READ: proxy the Apps Script doGet, returning { headers, rows }.
-export async function GET() {
+function authErrorResponse(error: unknown) {
+  if (error instanceof AuthError) {
+    return NextResponse.json(
+      { ok: false, error: error.message },
+      { status: error.status },
+    );
+  }
+  return null;
+}
+
+export async function GET(request: Request) {
+  try {
+    const user = await requireSupabaseUser(request);
+    requireMasterUser(user);
+  } catch (error) {
+    return (
+      authErrorResponse(error) ??
+      NextResponse.json(
+        { ok: false, error: "Could not verify spreadsheet access." },
+        { status: 500 },
+      )
+    );
+  }
+
   if (!isConfigured) {
     // Fall back to the imported spreadsheet snapshot until the live sheet is connected.
     return NextResponse.json({
@@ -69,6 +97,18 @@ export async function GET() {
 
 // WRITE: forward a header-keyed entry to the Apps Script doPost.
 export async function POST(request: Request) {
+  try {
+    await requireSupabaseUser(request);
+  } catch (error) {
+    return (
+      authErrorResponse(error) ??
+      NextResponse.json(
+        { ok: false, error: "Could not verify spreadsheet access." },
+        { status: 500 },
+      )
+    );
+  }
+
   const body = (await request.json()) as PostBody;
 
   if (!body.entry || typeof body.entry !== "object") {
