@@ -45,6 +45,7 @@ create table if not exists public.manager_profiles (
 
 create table if not exists public.outreach_logs (
   id uuid primary key default gen_random_uuid(),
+  organization_name text not null check (length(trim(organization_name)) > 0),
   data jsonb not null default '{}'::jsonb,
   owner_uid uuid not null references auth.users(id) on delete cascade,
   owner_email text not null,
@@ -52,6 +53,17 @@ create table if not exists public.outreach_logs (
   created_at timestamptz not null default now()
 );
 
+create or replace function public.normalize_organization_name(value text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select lower(regexp_replace(coalesce(value, ''), '[^a-z0-9]+', '', 'g'));
+$$;
+
+create unique index if not exists outreach_logs_organization_unique_idx
+  on public.outreach_logs (public.normalize_organization_name(organization_name));
 create index if not exists outreach_logs_owner_uid_idx
   on public.outreach_logs (owner_uid);
 create index if not exists outreach_logs_created_at_idx
@@ -144,6 +156,26 @@ using (
 
 grant select, insert, update on public.manager_profiles to authenticated;
 grant select, insert, update, delete on public.outreach_logs to authenticated;
+
+create or replace function public.organization_is_available(organization text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    length(public.normalize_organization_name(organization)) > 0
+    and not exists (
+      select 1
+      from public.outreach_logs
+      where public.normalize_organization_name(organization_name)
+        = public.normalize_organization_name(organization)
+    );
+$$;
+
+revoke all on function public.organization_is_available(text) from public;
+grant execute on function public.organization_is_available(text) to authenticated;
 
 do $$
 begin

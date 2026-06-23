@@ -1,7 +1,10 @@
 export type ManagerProfile = {
+  userId?: string;
   email: string;
   name: string;
   initials: string;
+  managerNumber?: number | null;
+  active?: boolean;
 };
 
 export function normalizeManagerProfile(

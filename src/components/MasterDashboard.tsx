@@ -9,6 +9,15 @@ import {
   subscribeLogs,
   type OutreachLog,
 } from "@/lib/logs";
+import {
+  ACTIVE_TASK_STATUSES,
+  fetchManagers,
+  managerLabel,
+  statusLabels,
+  subscribeOutreachTasks,
+  type OutreachTask,
+} from "@/lib/outreachTasks";
+import type { ManagerProfile } from "@/lib/profile";
 import { AppHeader } from "./AppHeader";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -41,6 +50,9 @@ export function MasterDashboard() {
   const [logs, setLogs] = useState<OutreachLog[]>([]);
   const [logSearch, setLogSearch] = useState("");
   const [logsLoading, setLogsLoading] = useState(true);
+  const [tasks, setTasks] = useState<OutreachTask[]>([]);
+  const [managers, setManagers] = useState<ManagerProfile[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
 
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<SheetRow[]>([]);
@@ -62,7 +74,26 @@ export function MasterDashboard() {
     return () => unsub();
   }, [user]);
 
-  // Church pipeline snapshot from the Google Sheet.
+  useEffect(() => {
+    if (!user) return;
+    const unsub = subscribeOutreachTasks(
+      "all",
+      user.id,
+      (next) => {
+        setTasks(next);
+        setTasksLoading(false);
+      },
+      () => setTasksLoading(false),
+    );
+
+    fetchManagers()
+      .then(setManagers)
+      .catch(() => undefined);
+
+    return () => unsub();
+  }, [user]);
+
+  // Organization pipeline snapshot from the private Google Sheet.
   async function loadSheet(showSpinner = false) {
     if (showSpinner) setSheetLoading(true);
     try {
@@ -118,6 +149,57 @@ export function MasterDashboard() {
     };
   }, [logs, rows]);
 
+  const taskMetrics = useMemo(() => {
+    const active = tasks.filter((task) => ACTIVE_TASK_STATUSES.includes(task.status)).length;
+    return {
+      total: tasks.length,
+      active,
+      sent: tasks.filter((task) => task.status === "sent").length,
+      needsEdit: tasks.filter((task) => task.status === "needs_edit").length,
+    };
+  }, [tasks]);
+
+  const managersById = useMemo(() => {
+    return new Map(managers.map((manager) => [manager.userId, manager]));
+  }, [managers]);
+
+  const managerProgress = useMemo(() => {
+    const progress = new Map<
+      string,
+      { label: string; assigned: number; active: number; sent: number }
+    >();
+
+    for (const manager of managers) {
+      if (!manager.userId) continue;
+      progress.set(manager.userId, {
+        label: managerLabel(manager),
+        assigned: 0,
+        active: 0,
+        sent: 0,
+      });
+    }
+
+    for (const task of tasks) {
+      const key = task.assignedTo || "unassigned";
+      const existing =
+        progress.get(key) ??
+        {
+          label: task.assignedManagerNumber
+            ? `#${task.assignedManagerNumber} Unassigned`
+            : "Unassigned",
+          assigned: 0,
+          active: 0,
+          sent: 0,
+        };
+      existing.assigned += 1;
+      if (ACTIVE_TASK_STATUSES.includes(task.status)) existing.active += 1;
+      if (task.status === "sent") existing.sent += 1;
+      progress.set(key, existing);
+    }
+
+    return Array.from(progress.values()).filter((row) => row.assigned > 0);
+  }, [managers, tasks]);
+
   const logColumns = useMemo(() => {
     const cols = new Set<string>();
     logs.forEach((log) =>
@@ -132,13 +214,98 @@ export function MasterDashboard() {
     <main className="ops-bg min-h-screen px-4 py-8 text-cream sm:px-6">
       <div className="pointer-events-none fixed inset-0 grid-overlay opacity-60" />
       <div className="relative mx-auto max-w-6xl space-y-6">
-        <AppHeader subtitle="Master view: every manager's logs, the live church pipeline, and team metrics." />
+        <AppHeader subtitle="Master view: every manager's logs, the private organization pipeline, and team metrics." />
 
         <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Metric value={metrics.totalLogs} label="Total logs" />
           <Metric value={metrics.managers} label="Active managers" />
           <Metric value={metrics.meetings} label="Meetings booked" />
-          <Metric value={metrics.prospects} label="Church prospects" />
+          <Metric value={metrics.prospects} label="Organizations" />
+        </section>
+
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Metric value={taskMetrics.total} label="Draft tasks" />
+          <Metric value={taskMetrics.active} label="Open tasks" />
+          <Metric value={taskMetrics.sent} label="Marked sent" />
+          <Metric value={taskMetrics.needsEdit} label="Needs edit" />
+        </section>
+
+        <section className="rounded-3xl border border-line bg-panel/90 p-5">
+          <div className="mb-5">
+            <h2 className="text-xl font-semibold">Email draft assignments</h2>
+            <p className="mt-1 text-sm text-cream-muted">
+              Manager workload and completion status from Supabase.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-[0.16em] text-cream-muted">
+                <tr className="border-b border-line">
+                  <th className="py-3 pr-4 font-medium">Manager</th>
+                  <th className="py-3 pr-4 font-medium">Assigned</th>
+                  <th className="py-3 pr-4 font-medium">Open</th>
+                  <th className="py-3 pr-4 font-medium">Sent</th>
+                  <th className="py-3 font-medium">Completion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {managerProgress.map((row) => (
+                  <tr key={row.label} className="border-b border-line/70">
+                    <td className="py-4 pr-4 font-medium text-cream">{row.label}</td>
+                    <td className="py-4 pr-4 text-cream-muted">{row.assigned}</td>
+                    <td className="py-4 pr-4 text-cream-muted">{row.active}</td>
+                    <td className="py-4 pr-4 text-cream-muted">{row.sent}</td>
+                    <td className="py-4 text-gold">
+                      {row.assigned ? `${Math.round((row.sent / row.assigned) * 100)}%` : "0%"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {managerProgress.length === 0 ? (
+              <div className="py-12 text-center text-sm text-cream-muted">
+                {tasksLoading ? "Loading draft assignments…" : "No drafted email tasks yet."}
+              </div>
+            ) : null}
+          </div>
+
+          {tasks.length ? (
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full min-w-[900px] text-left text-sm">
+                <thead className="text-xs uppercase tracking-[0.16em] text-cream-muted">
+                  <tr className="border-b border-line">
+                    <th className="py-3 pr-4 font-medium">Organization</th>
+                    <th className="py-3 pr-4 font-medium">Contact</th>
+                    <th className="py-3 pr-4 font-medium">Assigned</th>
+                    <th className="py-3 pr-4 font-medium">Status</th>
+                    <th className="py-3 font-medium">Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((task) => (
+                    <tr key={task.id} className="border-b border-line/70 align-top">
+                      <td className="py-4 pr-4">
+                        <span className="block font-medium text-cream">{task.organizationName}</span>
+                        <span className="block text-xs text-cream-muted">
+                          {task.organizationType || "Organization"}
+                        </span>
+                      </td>
+                      <td className="py-4 pr-4 text-cream-muted">
+                        <span className="block">{task.contactName || "Unknown"}</span>
+                        <span className="block text-xs">{task.contactEmail}</span>
+                      </td>
+                      <td className="py-4 pr-4 text-cream-muted">
+                        {managerLabel(managersById.get(task.assignedTo ?? ""))}
+                      </td>
+                      <td className="py-4 pr-4 text-gold">{statusLabels[task.status]}</td>
+                      <td className="py-4 text-cream-muted">{formatTime(task.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-3xl border border-line bg-panel/90 p-5">
@@ -211,7 +378,7 @@ export function MasterDashboard() {
         <section className="rounded-3xl border border-line bg-panel/90 p-5">
           <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Church pipeline</h2>
+              <h2 className="text-xl font-semibold">Organization pipeline</h2>
               <p className="mt-1 text-sm text-cream-muted">
                 {filteredRows.length} from the team spreadsheet
               </p>
