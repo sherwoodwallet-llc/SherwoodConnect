@@ -1,0 +1,156 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - agent-network
+
+  company-research-agent:
+    build:
+      context: ./agents/company-research-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      GOOGLE_SEARCH_API_KEY: ${GOOGLE_SEARCH_API_KEY}
+      GOOGLE_SEARCH_ENGINE_ID: ${GOOGLE_SEARCH_ENGINE_ID}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+      ALLOW_PLACEHOLDER_DATA: ${ALLOW_PLACEHOLDER_DATA:-false}
+    networks:
+      - agent-network
+
+  scoring-agent:
+    build:
+      context: ./agents/scoring-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    networks:
+      - agent-network
+
+  lead-classifier-agent:
+    build:
+      context: ./agents/lead-classifier-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    networks:
+      - agent-network
+
+  contact-finder-agent:
+    build:
+      context: ./agents/contact-finder-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      APOLLO_API_KEY: ${APOLLO_API_KEY}
+      APOLLO_REVEAL_PERSONAL_EMAILS: ${APOLLO_REVEAL_PERSONAL_EMAILS:-false}
+      HUNTER_API_KEY: ${HUNTER_API_KEY}
+      ALLOW_PLACEHOLDER_DATA: ${ALLOW_PLACEHOLDER_DATA:-false}
+    networks:
+      - agent-network
+
+  email-drafting-agent:
+    build:
+      context: ./agents/email-drafting-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    networks:
+      - agent-network
+
+  email-sending-agent:
+    build:
+      context: ./agents/email-sending-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      SEND_EMAILS: ${SEND_EMAILS}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_USE_TLS: ${SMTP_USE_TLS}
+      EMAIL_RATE_LIMIT_PER_HOUR: ${EMAIL_RATE_LIMIT_PER_HOUR}
+    networks:
+      - agent-network
+
+  outreach-task-agent:
+    build:
+      context: ./agents/outreach-task-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+    networks:
+      - agent-network
+
+  logging-agent:
+    build:
+      context: ./agents/logging-agent
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_LOG_TABLE: ${SUPABASE_LOG_TABLE}
+      LOG_FILE: /data/outreach_logs.jsonl
+    volumes:
+      - logging_data:/data
+    networks:
+      - agent-network
+
+networks:
+  agent-network:
+    name: lead-outreach-agent-network
+
+volumes:
+  postgres_data:
+  n8n_data:
+  logging_data:

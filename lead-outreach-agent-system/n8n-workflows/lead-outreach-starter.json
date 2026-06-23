@@ -1,0 +1,279 @@
+{
+  "id": "105ed28c-4048-46fc-8f7d-26cd863a379a",
+  "name": "Lead Outreach Agent System - Starter",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "2c2efc7d-c2a3-42fc-94a4-31259083cf2e",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://company-research-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"research_companies\", \"input\": { \"location\": \"United States\", \"keywords\": [\"church\", \"mosque\", \"temple\", \"religious center\", \"homeless shelter\", \"food pantry\", \"local nonprofit\", \"donate\", \"volunteer\", \"events\"], \"limit\": 10 } } }}",
+        "options": {}
+      },
+      "id": "97b267e0-4179-4b68-9657-0ba3f26e66df",
+      "name": "Research Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://scoring-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"score_companies\", \"input\": { \"companies\": $json.companies } } }}",
+        "options": {}
+      },
+      "id": "7f0d6579-d777-4711-a70c-60f08a5b8281",
+      "name": "Score Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const approved = $json.approved_companies || [];\n\nreturn approved.map((item) => ({\n  json: {\n    company: item.company,\n    score: item.score,\n    decision: item.decision,\n    reasoning: item.reasoning,\n    scored_company: item\n  }\n}));"
+      },
+      "id": "297170c7-384d-4177-a83b-ccf3303bb692",
+      "name": "Approved Company Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://contact-finder-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"find_contacts\", \"input\": { \"company\": $json.company, \"target_roles\": [\"Founder\", \"CEO\", \"Chief Executive Officer\", \"Head of Growth\", \"Head of Partnerships\", \"VP Partnerships\"], \"limit\": 3 } } }}",
+        "options": {}
+      },
+      "id": "958230e0-0085-4667-a43d-d9f13af4557b",
+      "name": "Find Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://email-drafting-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"draft_email\", \"input\": { \"company\": $json.company, \"contact\": $json.contacts[0], \"sender_profile\": { \"name\": \"__SENDER_NAME__\", \"background\": \"part of the Sherwood outreach team helping mission-driven organizations improve their digital outreach\", \"goal\": \"see whether a lightweight website, donor, volunteer, or outreach improvement could be useful\" } } } }}",
+        "options": {}
+      },
+      "id": "33ac058f-e80c-49e5-9bc1-f5f7dec1f889",
+      "name": "Draft Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://outreach-task-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"create_outreach_tasks\", \"input\": { \"drafts\": [ { \"organization_name\": $json.company.name, \"organization_type\": $json.company.lead_category || $json.company.industry || $json.company.company_stage || \"Prospect\", \"organization_website\": $json.company.website, \"fit_reason\": [$json.company.description, ...($json.company.signals || [])].filter(Boolean).join(\" | \"), \"contact_name\": $json.contact.name, \"contact_email\": $json.email.to || $json.contact.email, \"draft_subject\": $json.email.subject, \"draft_email\": $json.email.body, \"source_payload\": $json } ] } } }}",
+        "options": {}
+      },
+      "id": "134d15e7-2c12-4142-a764-42bed510c1e6",
+      "name": "Create Outreach Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://logging-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"log_outreach\", \"input\": { \"status\": \"queued_for_manager_review\", \"outreach_task_result\": $json } } }}",
+        "options": {}
+      },
+      "id": "03342848-f26e-4da7-bef8-fe8b85c892d4",
+      "name": "Log Outreach",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://lead-classifier-agent:8000/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"task\": \"classify_leads\", \"input\": { \"companies\": $json.companies } } }}",
+        "options": {}
+      },
+      "id": "6f5d7d69-3cc9-4cc3-9f04-77efad39161f",
+      "name": "Classify Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const classified = $json.classified_leads;\n\nif (!Array.isArray(classified)) {\n  throw new Error('lead-classifier-agent returned invalid JSON: classified_leads must be an array');\n}\n\nconst allowed = new Set([\n  'church',\n  'mosque',\n  'temple',\n  'religious_center',\n  'homeless_shelter',\n  'food_pantry',\n  'nonprofit'\n]);\n\nconst companies = [];\nfor (const lead of classified) {\n  if (!lead || typeof lead !== 'object') {\n    continue;\n  }\n  const hasRequiredFields = lead.organization_name && lead.website && lead.category && typeof lead.confidence === 'number' && lead.company;\n  if (!hasRequiredFields) {\n    continue;\n  }\n  if (lead.category === 'reject' || !allowed.has(lead.category) || lead.confidence < 0.75) {\n    continue;\n  }\n  companies.push({\n    ...lead.company,\n    name: lead.organization_name,\n    website: lead.website,\n    lead_category: lead.category,\n    classification_confidence: lead.confidence,\n    classification_reject_reason: lead.reject_reason || null,\n    classification: lead\n  });\n}\n\nif (companies.length === 0) {\n  return [];\n}\n\nreturn [{ json: { companies } }];"
+      },
+      "id": "503610b8-23f8-4383-9a2d-fc5f40812ead",
+      "name": "Qualified Lead Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Research Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Companies": {
+      "main": [
+        [
+          {
+            "node": "Classify Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Leads": {
+      "main": [
+        [
+          {
+            "node": "Qualified Lead Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualified Lead Gate": {
+      "main": [
+        [
+          {
+            "node": "Score Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Companies": {
+      "main": [
+        [
+          {
+            "node": "Approved Company Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved Company Gate": {
+      "main": [
+        [
+          {
+            "node": "Find Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Contacts": {
+      "main": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Email": {
+      "main": [
+        [
+          {
+            "node": "Create Outreach Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Outreach Task": {
+      "main": [
+        [
+          {
+            "node": "Log Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "rules-first-mission-driven-leads",
+  "triggerCount": 0,
+  "tags": []
+}
