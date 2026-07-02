@@ -10,6 +10,17 @@ export type OutreachTaskStatus =
   | "rejected"
   | "failed";
 
+export type OutreachResponseStatus =
+  | "not_tracked"
+  | "no_response"
+  | "replied"
+  | "positive"
+  | "neutral"
+  | "negative"
+  | "bounced"
+  | "wrong_contact"
+  | "do_not_contact";
+
 export type OutreachTask = {
   id: string;
   batchId: string | null;
@@ -27,6 +38,13 @@ export type OutreachTask = {
   managerNotes: string | null;
   sentAt: Date | null;
   sentBy: string | null;
+  responseStatus: OutreachResponseStatus;
+  responseScore: number;
+  responseReceivedAt: Date | null;
+  responseExcerpt: string | null;
+  responseNotes: string | null;
+  responseUpdatedAt: Date | null;
+  responseUpdatedBy: string | null;
   createdAt: Date | null;
 };
 
@@ -47,6 +65,13 @@ type OutreachTaskRow = {
   manager_notes: string | null;
   sent_at: string | null;
   sent_by: string | null;
+  response_status: OutreachResponseStatus;
+  response_score: number;
+  response_received_at: string | null;
+  response_excerpt: string | null;
+  response_notes: string | null;
+  response_updated_at: string | null;
+  response_updated_by: string | null;
   created_at: string | null;
 };
 
@@ -76,6 +101,13 @@ const TASK_SELECT = [
   "manager_notes",
   "sent_at",
   "sent_by",
+  "response_status",
+  "response_score",
+  "response_received_at",
+  "response_excerpt",
+  "response_notes",
+  "response_updated_at",
+  "response_updated_by",
   "created_at",
 ].join(",");
 
@@ -93,6 +125,27 @@ export const statusLabels: Record<OutreachTaskStatus, string> = {
   sent: "Sent",
   rejected: "Rejected",
   failed: "Failed",
+};
+
+export const responseStatusLabels: Record<OutreachResponseStatus, string> = {
+  not_tracked: "Not tracked",
+  no_response: "No response",
+  replied: "Replied",
+  positive: "Positive",
+  neutral: "Neutral",
+  negative: "Negative",
+  bounced: "Bounced",
+  wrong_contact: "Wrong contact",
+  do_not_contact: "Do not contact",
+};
+
+export const responseScoreLabels: Record<number, string> = {
+  [-2]: "Bad fit / harmful",
+  [-1]: "Weak signal",
+  0: "No signal yet",
+  1: "Reply",
+  2: "Positive reply",
+  3: "Booked / high intent",
 };
 
 function mapTask(row: OutreachTaskRow): OutreachTask {
@@ -113,6 +166,17 @@ function mapTask(row: OutreachTaskRow): OutreachTask {
     managerNotes: row.manager_notes,
     sentAt: row.sent_at ? new Date(row.sent_at) : null,
     sentBy: row.sent_by,
+    responseStatus: row.response_status,
+    responseScore: row.response_score,
+    responseReceivedAt: row.response_received_at
+      ? new Date(row.response_received_at)
+      : null,
+    responseExcerpt: row.response_excerpt,
+    responseNotes: row.response_notes,
+    responseUpdatedAt: row.response_updated_at
+      ? new Date(row.response_updated_at)
+      : null,
+    responseUpdatedBy: row.response_updated_by,
     createdAt: row.created_at ? new Date(row.created_at) : null,
   };
 }
@@ -157,6 +221,13 @@ export async function updateOutreachTask(
     manager_notes: string;
     sent_at: string | null;
     sent_by: string | null;
+    response_status: OutreachResponseStatus;
+    response_score: number;
+    response_received_at: string | null;
+    response_excerpt: string | null;
+    response_notes: string | null;
+    response_updated_at: string | null;
+    response_updated_by: string | null;
   }>,
 ): Promise<void> {
   const { error } = await getSupabase().from("outreach_tasks").update(patch).eq("id", id);

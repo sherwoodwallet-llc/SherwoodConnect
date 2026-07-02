@@ -13,6 +13,7 @@ import {
   ACTIVE_TASK_STATUSES,
   fetchManagers,
   managerLabel,
+  responseStatusLabels,
   statusLabels,
   subscribeOutreachTasks,
   type OutreachTask,
@@ -151,11 +152,18 @@ export function MasterDashboard() {
 
   const taskMetrics = useMemo(() => {
     const active = tasks.filter((task) => ACTIVE_TASK_STATUSES.includes(task.status)).length;
+    const replied = tasks.filter((task) =>
+      !["not_tracked", "no_response"].includes(task.responseStatus),
+    ).length;
     return {
       total: tasks.length,
       active,
       sent: tasks.filter((task) => task.status === "sent").length,
       needsEdit: tasks.filter((task) => task.status === "needs_edit").length,
+      replied,
+      positive: tasks.filter((task) => task.responseStatus === "positive").length,
+      booked: tasks.filter((task) => task.responseScore >= 3).length,
+      bounced: tasks.filter((task) => task.responseStatus === "bounced").length,
     };
   }, [tasks]);
 
@@ -166,7 +174,14 @@ export function MasterDashboard() {
   const managerProgress = useMemo(() => {
     const progress = new Map<
       string,
-      { label: string; assigned: number; active: number; sent: number }
+      {
+        label: string;
+        assigned: number;
+        active: number;
+        sent: number;
+        replied: number;
+        positive: number;
+      }
     >();
 
     for (const manager of managers) {
@@ -176,6 +191,8 @@ export function MasterDashboard() {
         assigned: 0,
         active: 0,
         sent: 0,
+        replied: 0,
+        positive: 0,
       });
     }
 
@@ -190,10 +207,16 @@ export function MasterDashboard() {
           assigned: 0,
           active: 0,
           sent: 0,
+          replied: 0,
+          positive: 0,
         };
       existing.assigned += 1;
       if (ACTIVE_TASK_STATUSES.includes(task.status)) existing.active += 1;
       if (task.status === "sent") existing.sent += 1;
+      if (!["not_tracked", "no_response"].includes(task.responseStatus)) {
+        existing.replied += 1;
+      }
+      if (task.responseStatus === "positive") existing.positive += 1;
       progress.set(key, existing);
     }
 
@@ -227,6 +250,10 @@ export function MasterDashboard() {
           <Metric value={taskMetrics.total} label="Draft tasks" />
           <Metric value={taskMetrics.active} label="Open tasks" />
           <Metric value={taskMetrics.sent} label="Marked sent" />
+          <Metric value={taskMetrics.replied} label="Replies tracked" />
+          <Metric value={taskMetrics.positive} label="Positive replies" />
+          <Metric value={taskMetrics.booked} label="Booked/high intent" />
+          <Metric value={taskMetrics.bounced} label="Bounced" />
           <Metric value={taskMetrics.needsEdit} label="Needs edit" />
         </section>
 
@@ -246,7 +273,9 @@ export function MasterDashboard() {
                   <th className="py-3 pr-4 font-medium">Assigned</th>
                   <th className="py-3 pr-4 font-medium">Open</th>
                   <th className="py-3 pr-4 font-medium">Sent</th>
-                  <th className="py-3 font-medium">Completion</th>
+                  <th className="py-3 pr-4 font-medium">Replies</th>
+                  <th className="py-3 pr-4 font-medium">Positive</th>
+                  <th className="py-3 font-medium">Reply rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -256,8 +285,10 @@ export function MasterDashboard() {
                     <td className="py-4 pr-4 text-cream-muted">{row.assigned}</td>
                     <td className="py-4 pr-4 text-cream-muted">{row.active}</td>
                     <td className="py-4 pr-4 text-cream-muted">{row.sent}</td>
+                    <td className="py-4 pr-4 text-cream-muted">{row.replied}</td>
+                    <td className="py-4 pr-4 text-cream-muted">{row.positive}</td>
                     <td className="py-4 text-gold">
-                      {row.assigned ? `${Math.round((row.sent / row.assigned) * 100)}%` : "0%"}
+                      {row.sent ? `${Math.round((row.replied / row.sent) * 100)}%` : "0%"}
                     </td>
                   </tr>
                 ))}
@@ -279,6 +310,8 @@ export function MasterDashboard() {
                     <th className="py-3 pr-4 font-medium">Contact</th>
                     <th className="py-3 pr-4 font-medium">Assigned</th>
                     <th className="py-3 pr-4 font-medium">Status</th>
+                    <th className="py-3 pr-4 font-medium">Reply outcome</th>
+                    <th className="py-3 pr-4 font-medium">Score</th>
                     <th className="py-3 font-medium">Updated</th>
                   </tr>
                 </thead>
@@ -299,6 +332,15 @@ export function MasterDashboard() {
                         {managerLabel(managersById.get(task.assignedTo ?? ""))}
                       </td>
                       <td className="py-4 pr-4 text-gold">{statusLabels[task.status]}</td>
+                      <td className="py-4 pr-4 text-cream-muted">
+                        {responseStatusLabels[task.responseStatus]}
+                        {task.responseReceivedAt ? (
+                          <span className="block text-xs text-cream-muted">
+                            {formatTime(task.responseReceivedAt)}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="py-4 pr-4 text-gold">{task.responseScore}</td>
                       <td className="py-4 text-cream-muted">{formatTime(task.createdAt)}</td>
                     </tr>
                   ))}

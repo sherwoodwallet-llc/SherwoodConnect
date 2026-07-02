@@ -6,7 +6,9 @@ import {
   ArrowRight,
   CheckCircle2,
   Copy,
+  MessageSquareReply,
   Plus,
+  Save,
   Search,
   XCircle,
 } from "lucide-react";
@@ -26,9 +28,12 @@ import {
 } from "@/lib/logs";
 import {
   ACTIVE_TASK_STATUSES,
+  responseScoreLabels,
+  responseStatusLabels,
   statusLabels,
   subscribeOutreachTasks,
   updateOutreachTask,
+  type OutreachResponseStatus,
   type OutreachTask,
   type OutreachTaskStatus,
 } from "@/lib/outreachTasks";
@@ -59,6 +64,19 @@ function formatTime(value: Date | null) {
   }).format(value);
 }
 
+function formatDateInput(value: Date | null) {
+  if (!value) return "";
+  return value.toISOString().slice(0, 10);
+}
+
+type ReplyForm = {
+  responseStatus: OutreachResponseStatus;
+  responseScore: string;
+  responseReceivedAt: string;
+  responseExcerpt: string;
+  responseNotes: string;
+};
+
 function TaskStatusBadge({ status }: { status: OutreachTaskStatus }) {
   const classes =
     status === "sent"
@@ -83,6 +101,9 @@ function DraftTaskCard({
   onNotesChange,
   onCopy,
   onStatus,
+  replyForm,
+  onReplyChange,
+  onSaveResponse,
 }: {
   task: OutreachTask;
   notes: string;
@@ -90,7 +111,13 @@ function DraftTaskCard({
   onNotesChange: (value: string) => void;
   onCopy: () => void;
   onStatus: (status: OutreachTaskStatus) => void;
+  replyForm?: ReplyForm;
+  onReplyChange?: (patch: Partial<ReplyForm>) => void;
+  onSaveResponse?: () => void;
 }) {
+  const canTrackResponse =
+    task.status === "sent" && replyForm && onReplyChange && onSaveResponse;
+
   return (
     <article className="rounded-2xl border border-line bg-cream/[0.035] p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -150,34 +177,131 @@ function DraftTaskCard({
           <Copy size={16} />
           Copy draft
         </button>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() => onStatus("sent")}
-          className="inline-flex items-center gap-2 rounded-full bg-gold px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
-        >
-          <CheckCircle2 size={16} />
-          Mark sent
-        </button>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() => onStatus("needs_edit")}
-          className="inline-flex items-center gap-2 rounded-full border border-line px-4 py-2 text-sm text-cream-muted transition-colors hover:text-cream disabled:opacity-50"
-        >
-          <AlertTriangle size={16} />
-          Needs edit
-        </button>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() => onStatus("rejected")}
-          className="inline-flex items-center gap-2 rounded-full border border-red-300/30 px-4 py-2 text-sm text-red-200 transition-colors hover:border-red-200 disabled:opacity-50"
-        >
-          <XCircle size={16} />
-          Reject
-        </button>
+        {task.status !== "sent" ? (
+          <>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onStatus("sent")}
+              className="inline-flex items-center gap-2 rounded-full bg-gold px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
+            >
+              <CheckCircle2 size={16} />
+              Mark sent
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onStatus("needs_edit")}
+              className="inline-flex items-center gap-2 rounded-full border border-line px-4 py-2 text-sm text-cream-muted transition-colors hover:text-cream disabled:opacity-50"
+            >
+              <AlertTriangle size={16} />
+              Needs edit
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onStatus("rejected")}
+              className="inline-flex items-center gap-2 rounded-full border border-red-300/30 px-4 py-2 text-sm text-red-200 transition-colors hover:border-red-200 disabled:opacity-50"
+            >
+              <XCircle size={16} />
+              Reject
+            </button>
+          </>
+        ) : null}
       </div>
+
+      {canTrackResponse ? (
+        <div className="mt-5 rounded-2xl border border-line bg-panel-soft/70 p-4">
+          <div className="mb-4 flex items-center gap-2">
+            <MessageSquareReply size={17} className="text-gold" />
+            <div>
+              <h4 className="text-sm font-semibold">Reply tracking</h4>
+              <p className="text-xs text-cream-muted">
+                Mark responses so Tracy can learn which drafts are working.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="block">
+              <span className="mb-1 block text-xs text-cream-muted">Outcome</span>
+              <select
+                className="field"
+                value={replyForm.responseStatus}
+                onChange={(event) =>
+                  onReplyChange({
+                    responseStatus: event.target.value as OutreachResponseStatus,
+                  })
+                }
+              >
+                {Object.entries(responseStatusLabels).map(([value, label]) => (
+                  <option key={value} value={value} className="bg-panel text-cream">
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-xs text-cream-muted">Score</span>
+              <select
+                className="field"
+                value={replyForm.responseScore}
+                onChange={(event) =>
+                  onReplyChange({ responseScore: event.target.value })
+                }
+              >
+                {Object.entries(responseScoreLabels).map(([value, label]) => (
+                  <option key={value} value={value} className="bg-panel text-cream">
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-xs text-cream-muted">Reply date</span>
+              <input
+                className="field"
+                type="date"
+                value={replyForm.responseReceivedAt}
+                onChange={(event) =>
+                  onReplyChange({ responseReceivedAt: event.target.value })
+                }
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <textarea
+              className="field min-h-24"
+              value={replyForm.responseExcerpt}
+              onChange={(event) =>
+                onReplyChange({ responseExcerpt: event.target.value })
+              }
+              placeholder="Optional reply excerpt"
+            />
+            <textarea
+              className="field min-h-24"
+              value={replyForm.responseNotes}
+              onChange={(event) =>
+                onReplyChange({ responseNotes: event.target.value })
+              }
+              placeholder="Why do you think this worked or failed?"
+            />
+          </div>
+
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onSaveResponse}
+            className="mt-3 inline-flex items-center gap-2 rounded-full bg-gold px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
+          >
+            <Save size={16} />
+            Save reply tracking
+          </button>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -186,6 +310,7 @@ export function ManagerDashboard() {
   const { user, profile } = useAuth();
   const [tasks, setTasks] = useState<OutreachTask[]>([]);
   const [taskNotes, setTaskNotes] = useState<Record<string, string>>({});
+  const [replyForms, setReplyForms] = useState<Record<string, ReplyForm>>({});
   const [tasksLoading, setTasksLoading] = useState(true);
   const [taskSaving, setTaskSaving] = useState<string | null>(null);
   const [taskSuccess, setTaskSuccess] = useState<string | null>(null);
@@ -240,6 +365,20 @@ export function ManagerDashboard() {
         setTaskNotes(
           Object.fromEntries(next.map((task) => [task.id, task.managerNotes ?? ""])),
         );
+        setReplyForms(
+          Object.fromEntries(
+            next.map((task) => [
+              task.id,
+              {
+                responseStatus: task.responseStatus,
+                responseScore: String(task.responseScore),
+                responseReceivedAt: formatDateInput(task.responseReceivedAt),
+                responseExcerpt: task.responseExcerpt ?? "",
+                responseNotes: task.responseNotes ?? "",
+              },
+            ]),
+          ),
+        );
         setTasksLoading(false);
       },
       (err) => {
@@ -264,6 +403,11 @@ export function ManagerDashboard() {
 
   const visibleTasks = useMemo(
     () => tasks.filter((task) => ACTIVE_TASK_STATUSES.includes(task.status)),
+    [tasks],
+  );
+
+  const sentTasks = useMemo(
+    () => tasks.filter((task) => task.status === "sent"),
     [tasks],
   );
 
@@ -370,6 +514,52 @@ export function ManagerDashboard() {
     }
   }
 
+  function updateReplyForm(taskId: string, patch: Partial<ReplyForm>) {
+    const fallback: ReplyForm = {
+      responseStatus: "not_tracked",
+      responseScore: "0",
+      responseReceivedAt: "",
+      responseExcerpt: "",
+      responseNotes: "",
+    };
+    setReplyForms((current) => ({
+      ...current,
+      [taskId]: {
+        ...fallback,
+        ...current[taskId],
+        ...patch,
+      },
+    }));
+  }
+
+  async function saveTaskResponse(task: OutreachTask) {
+    if (!user) return;
+    const form = replyForms[task.id];
+    if (!form) return;
+    setTaskSaving(task.id);
+    setError(null);
+    setTaskSuccess(null);
+    try {
+      await updateOutreachTask(task.id, {
+        response_status: form.responseStatus,
+        response_score: Number(form.responseScore),
+        response_received_at: form.responseReceivedAt
+          ? new Date(`${form.responseReceivedAt}T12:00:00`).toISOString()
+          : null,
+        response_excerpt: form.responseExcerpt.trim() || null,
+        response_notes: form.responseNotes.trim() || null,
+        response_updated_at: new Date().toISOString(),
+        response_updated_by: user.id,
+      });
+      setTaskSuccess(`${task.organizationName} response saved.`);
+      window.setTimeout(() => setTaskSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save response.");
+    } finally {
+      setTaskSaving(null);
+    }
+  }
+
   async function copyDraft(task: OutreachTask) {
     await navigator.clipboard.writeText(
       `${task.draftSubject || "Draft email"}\n\n${task.draftEmail}`,
@@ -427,6 +617,41 @@ export function ManagerDashboard() {
               </div>
             ) : null}
           </div>
+
+          {sentTasks.length ? (
+            <div className="mt-8">
+              <div className="mb-3">
+                <h3 className="text-lg font-semibold">Reply tracking</h3>
+                <p className="mt-1 text-sm text-cream-muted">
+                  Update sent drafts when a contact replies, bounces, or goes cold.
+                </p>
+              </div>
+              <div className="space-y-3">
+                {sentTasks.map((task) => (
+                  <DraftTaskCard
+                    key={task.id}
+                    task={task}
+                    notes={taskNotes[task.id] ?? ""}
+                    saving={taskSaving === task.id}
+                    onNotesChange={(value) =>
+                      setTaskNotes((current) => ({ ...current, [task.id]: value }))
+                    }
+                    onCopy={() => {
+                      void copyDraft(task);
+                    }}
+                    onStatus={(status) => {
+                      void updateTaskStatus(task, status);
+                    }}
+                    replyForm={replyForms[task.id]}
+                    onReplyChange={(patch) => updateReplyForm(task.id, patch)}
+                    onSaveResponse={() => {
+                      void saveTaskResponse(task);
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
