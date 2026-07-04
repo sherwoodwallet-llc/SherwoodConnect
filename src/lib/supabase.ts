@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+export { MASTER_EMAIL, MASTER_EMAILS, isMasterEmail } from "./master-access";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const supabasePublishableKey = (
@@ -9,10 +10,6 @@ const supabasePublishableKey = (
 export const isSupabaseConfigured = Boolean(
   supabaseUrl && supabasePublishableKey,
 );
-
-export const MASTER_EMAIL =
-  process.env.NEXT_PUBLIC_MASTER_EMAIL?.trim().toLowerCase() ||
-  "hadiabdul8128@gmail.com";
 
 let client: SupabaseClient | undefined;
 

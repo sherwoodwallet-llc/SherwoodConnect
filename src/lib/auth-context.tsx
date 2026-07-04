@@ -13,7 +13,7 @@ import type { EmailOtpType, User } from "@supabase/supabase-js";
 import {
   getSupabase,
   isSupabaseConfigured,
-  MASTER_EMAIL,
+  isMasterEmail,
 } from "./supabase";
 import type { ManagerProfile } from "./profile";
 
@@ -385,9 +385,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.removeItem(STORAGE_EMAIL_KEY);
   }, []);
 
-  const isMaster = Boolean(
-    user?.email && user.email.toLowerCase() === MASTER_EMAIL,
-  );
+  const isMaster = isMasterEmail(user?.email);
   const needsProfile = Boolean(
     user && !isMaster && (!profile || !profile.name || !profile.initials),
   );

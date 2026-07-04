@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient, type User } from "@supabase/supabase-js";
+import { isMasterEmail } from "../master-access";
 
 export class AuthError extends Error {
   constructor(
@@ -42,10 +43,7 @@ export async function requireSupabaseUser(request: Request): Promise<User> {
 }
 
 export function requireMasterUser(user: User) {
-  const masterEmail =
-    process.env.NEXT_PUBLIC_MASTER_EMAIL?.trim().toLowerCase() ||
-    "hadiabdul8128@gmail.com";
-  if (user.email?.toLowerCase() !== masterEmail) {
+  if (!isMasterEmail(user.email)) {
     throw new AuthError("Master access is required.", 403);
   }
 }

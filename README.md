@@ -20,8 +20,9 @@ New users are asked for a name and initials after their first login.
 5. Copy `.env.example` to `.env.local` and add the project URL and publishable
    key from **Project Settings → API**.
 
-If the master account changes, update both `NEXT_PUBLIC_MASTER_EMAIL` and the
-row in `public.app_admins`.
+If master access changes, update both `NEXT_PUBLIC_MASTER_EMAIL` and the
+matching rows in `public.app_admins`. Multiple master emails can be comma
+separated.
 
 ## Local development
 
@@ -39,7 +40,7 @@ Add these environment variables to the Vercel project and redeploy:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `NEXT_PUBLIC_AUTH_REDIRECT_ORIGIN=https://sherwood-connect.vercel.app`
-- `NEXT_PUBLIC_MASTER_EMAIL=hadiabdul8128@gmail.com`
+- `NEXT_PUBLIC_MASTER_EMAIL=hadiabdul8128@gmail.com,sherwoodwallet@gmail.com`
 - `GOOGLE_APPS_SCRIPT_WEBHOOK_URL`, if Google Sheets sync is enabled
 
 The publishable key is intended for browser use. Data access is protected by
