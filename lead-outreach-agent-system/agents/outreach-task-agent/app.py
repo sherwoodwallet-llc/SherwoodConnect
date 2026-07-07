@@ -1,5 +1,4 @@
 import os
-import random
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -10,6 +9,7 @@ from pydantic import BaseModel, Field
 
 
 app = FastAPI(title="Outreach Task Agent", version="0.1.0")
+EXCLUDED_MANAGER_NUMBERS = {1}
 
 
 class TaskType(str, Enum):
@@ -81,22 +81,43 @@ def fetch_active_managers() -> list[dict[str, Any]]:
         raise HTTPException(status_code=502, detail=f"Unable to fetch managers: {response.text}")
 
     managers = response.json()
+    managers = [
+        manager
+        for manager in managers
+        if manager.get("manager_number") not in EXCLUDED_MANAGER_NUMBERS
+    ]
     if not managers:
-        raise HTTPException(status_code=409, detail="No active manager profiles found.")
+        raise HTTPException(status_code=409, detail="No eligible active manager profiles found.")
     return managers
+
+
+def fetch_pending_counts() -> dict[str, int]:
+    response = requests.get(
+        rest_url("outreach_tasks"),
+        headers=supabase_headers(),
+        params={
+            "select": "assigned_to",
+            "status": "in.(pending_review,needs_edit,approved)",
+        },
+        timeout=15,
+    )
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Unable to fetch task load: {response.text}")
+
+    counts: dict[str, int] = {}
+    for row in response.json():
+        assigned_to = row.get("assigned_to")
+        if assigned_to:
+            counts[assigned_to] = counts.get(assigned_to, 0) + 1
+    return counts
 
 
 def task_exists(draft: DraftInput) -> bool:
     params = {
-        "select": "id",
-        "contact_email": f"eq.{draft.contact_email}",
-        "limit": "1",
+        "select": "id,contact_email,organization_name,organization_website",
+        "contact_email": f"ilike.{draft.contact_email}",
     }
-
-    if draft.organization_website:
-        params["organization_website"] = f"eq.{draft.organization_website}"
-    else:
-        params["organization_name"] = f"eq.{draft.organization_name}"
 
     response = requests.get(
         rest_url("outreach_tasks"),
@@ -108,7 +129,21 @@ def task_exists(draft: DraftInput) -> bool:
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"Duplicate check failed: {response.text}")
 
-    return bool(response.json())
+    draft_email = draft.contact_email.strip().lower()
+    draft_website = (draft.organization_website or "").strip().lower()
+    draft_name = draft.organization_name.strip().lower()
+
+    for row in response.json():
+        row_email = str(row.get("contact_email") or "").strip().lower()
+        row_website = str(row.get("organization_website") or "").strip().lower()
+        row_name = str(row.get("organization_name") or "").strip().lower()
+        if row_email != draft_email:
+            continue
+        if draft_website and row_website == draft_website:
+            return True
+        if row_name == draft_name:
+            return True
+    return False
 
 
 def normalize_drafts(raw_drafts: Any) -> list[DraftInput]:
@@ -164,8 +199,8 @@ def assign_sender_to_draft(draft: DraftInput, manager: dict[str, Any]) -> DraftI
     return DraftInput.model_validate(draft_data)
 
 
-def insert_task(draft: DraftInput, manager: dict[str, Any], batch_id: str) -> dict[str, Any]:
-    row = {
+def build_task_row(draft: DraftInput, manager: dict[str, Any], batch_id: str) -> dict[str, Any]:
+    return {
         "batch_id": batch_id,
         "organization_name": draft.organization_name,
         "organization_type": draft.organization_type,
@@ -178,54 +213,85 @@ def insert_task(draft: DraftInput, manager: dict[str, Any], batch_id: str) -> di
         "assigned_to": manager["user_id"],
         "assigned_manager_number": manager.get("manager_number"),
         "status": "pending_review",
-        "created_by_agent": "outreach-task-agent",
+        "created_by_agent": "tracy",
         "source_payload": draft.source_payload or {},
     }
 
+
+def insert_tasks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     response = requests.post(
         rest_url("outreach_tasks"),
         headers={**supabase_headers(), "Prefer": "return=representation"},
-        json=row,
+        json=rows,
         timeout=15,
     )
 
     if response.status_code == 409:
-        return {"status": "duplicate", "draft": draft.model_dump()}
+        raise HTTPException(
+            status_code=409,
+            detail="Bulk task insert found a duplicate; no outreach task rows were inserted.",
+        )
 
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"Task insert failed: {response.text}")
 
-    inserted = response.json()
-    return {"status": "created", "task": inserted[0] if inserted else row}
+    return response.json()
 
 
 @app.post("/run")
 def run(request: RunRequest) -> dict[str, Any]:
     drafts = normalize_drafts(request.input.get("drafts"))
     managers = fetch_active_managers()
-    random.shuffle(managers)
+    pending_counts = fetch_pending_counts()
 
     batch_id = request.input.get("batch_id") or str(uuid4())
     created: list[dict[str, Any]] = []
     skipped_duplicates: list[dict[str, Any]] = []
     assignment_counts: dict[int | str, int] = {}
+    qualified: list[DraftInput] = []
 
-    assignable_index = 0
     for draft in drafts:
         if task_exists(draft):
             skipped_duplicates.append(draft.model_dump())
             continue
+        qualified.append(draft)
 
-        manager = managers[assignable_index % len(managers)]
-        assignable_index += 1
+    full_manager_sets = min(len(managers), len(qualified) // 3)
+    if full_manager_sets < 1:
+        return {
+            "agent": "outreach-task-agent",
+            "task": request.task.value,
+            "batch_id": batch_id,
+            "created": 0,
+            "skipped_duplicates": len(skipped_duplicates),
+            "assignments": [],
+            "tasks": [],
+            "status": "blocked_incomplete_manager_set",
+            "detail": "Fewer than 3 non-duplicate drafts were available, so no outreach_tasks rows were inserted.",
+        }
+
+    selected_managers = sorted(
+        managers,
+        key=lambda manager: (
+            pending_counts.get(manager["user_id"], 0),
+            manager.get("manager_number") or 999999,
+            manager.get("email") or "",
+        ),
+    )[:full_manager_sets]
+
+    selected_drafts = qualified[: full_manager_sets * 3]
+    rows: list[dict[str, Any]] = []
+    row_managers: list[dict[str, Any]] = []
+
+    for index, draft in enumerate(selected_drafts):
+        manager = selected_managers[index // 3]
         draft = assign_sender_to_draft(draft, manager)
+        rows.append(build_task_row(draft, manager, batch_id))
+        row_managers.append(manager)
 
-        result = insert_task(draft, manager, batch_id)
-        if result["status"] == "duplicate":
-            skipped_duplicates.append(draft.model_dump())
-            continue
+    inserted_tasks = insert_tasks(rows)
 
-        task = result["task"]
+    for task, manager in zip(inserted_tasks, row_managers):
         created.append(task)
         manager_number = manager.get("manager_number") or manager["user_id"]
         assignment_counts[manager_number] = assignment_counts.get(manager_number, 0) + 1
@@ -241,6 +307,8 @@ def run(request: RunRequest) -> dict[str, Any]:
         "batch_id": batch_id,
         "created": len(created),
         "skipped_duplicates": len(skipped_duplicates),
+        "qualified_not_inserted": max(len(qualified) - len(selected_drafts), 0),
+        "status": "complete" if created == len(selected_drafts) else "partial_error",
         "assignments": assignments,
         "tasks": created,
     }

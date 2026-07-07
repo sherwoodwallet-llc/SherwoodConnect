@@ -152,6 +152,13 @@ If Supabase values are blank, the logging agent writes to `/data/outreach_logs.j
 
 If Supabase values are blank, `outreach-task-agent` can start, but `/run` will return a configuration error because it cannot create website tasks without Supabase.
 
+`outreach-task-agent` enforces Tracy's completion gate before writing:
+
+- fetch active managers from `manager_profiles`.
+- check current task load and assign complete 3-draft sets to the least-loaded managers first.
+- skip duplicates by `lower(contact_email)` plus matching website or organization name.
+- insert selected rows in one bulk request so an insert conflict fails the batch instead of giving a manager fewer than 3 new tasks.
+
 ## n8n Workflow
 
 Create this simple n8n workflow:
