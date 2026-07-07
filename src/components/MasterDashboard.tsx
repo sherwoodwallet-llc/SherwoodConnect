@@ -22,6 +22,7 @@ import type { ManagerProfile } from "@/lib/profile";
 import { AppHeader } from "./AppHeader";
 
 const POLL_INTERVAL_MS = 15_000;
+const EXCLUDED_MANAGER_NUMBERS = new Set([1]);
 
 function isLongFormColumn(header: string) {
   return /note|summary|comment|detail|description/i.test(header);
@@ -44,6 +45,15 @@ function Metric({ value, label }: { value: number; label: string }) {
       <p className="text-xs text-cream-muted">{label}</p>
     </div>
   );
+}
+
+function isExcludedManager(manager?: ManagerProfile | null) {
+  return Boolean(manager?.managerNumber && EXCLUDED_MANAGER_NUMBERS.has(manager.managerNumber));
+}
+
+function masterManagerLabel(manager?: ManagerProfile | null) {
+  const label = managerLabel(manager);
+  return isExcludedManager(manager) ? `${label} (excluded)` : label;
 }
 
 export function MasterDashboard() {
@@ -87,11 +97,23 @@ export function MasterDashboard() {
       () => setTasksLoading(false),
     );
 
-    fetchManagers()
-      .then(setManagers)
-      .catch(() => undefined);
+    let active = true;
+    const loadManagers = () => {
+      fetchManagers()
+        .then((next) => {
+          if (active) setManagers(next);
+        })
+        .catch(() => undefined);
+    };
 
-    return () => unsub();
+    loadManagers();
+    const id = window.setInterval(loadManagers, POLL_INTERVAL_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(id);
+      unsub();
+    };
   }, [user]);
 
   // Organization pipeline snapshot from the private Google Sheet.
@@ -187,7 +209,7 @@ export function MasterDashboard() {
     for (const manager of managers) {
       if (!manager.userId) continue;
       progress.set(manager.userId, {
-        label: managerLabel(manager),
+        label: masterManagerLabel(manager),
         assigned: 0,
         active: 0,
         sent: 0,
@@ -220,7 +242,7 @@ export function MasterDashboard() {
       progress.set(key, existing);
     }
 
-    return Array.from(progress.values()).filter((row) => row.assigned > 0);
+    return Array.from(progress.values());
   }, [managers, tasks]);
 
   const logColumns = useMemo(() => {
@@ -329,7 +351,7 @@ export function MasterDashboard() {
                         <span className="block text-xs">{task.contactEmail}</span>
                       </td>
                       <td className="py-4 pr-4 text-cream-muted">
-                        {managerLabel(managersById.get(task.assignedTo ?? ""))}
+                        {masterManagerLabel(managersById.get(task.assignedTo ?? ""))}
                       </td>
                       <td className="py-4 pr-4 text-gold">{statusLabels[task.status]}</td>
                       <td className="py-4 pr-4 text-cream-muted">
