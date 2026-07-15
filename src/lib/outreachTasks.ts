@@ -208,6 +208,7 @@ export async function fetchManagers(): Promise<ManagerProfile[]> {
   const { data, error } = await getSupabase()
     .from("manager_profiles")
     .select("user_id,email,name,initials,manager_number,active")
+    .eq("active", true)
     .order("manager_number", { ascending: true });
 
   if (error) throw error;
