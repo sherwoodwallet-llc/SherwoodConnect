@@ -1,0 +1,44 @@
+project_id = "SherwoodConnect"
+
+[auth]
+enabled = true
+site_url = "https://sherwood-connect.vercel.app"
+additional_redirect_urls = [
+  "https://sherwood-connect.vercel.app/**",
+  "https://sherwood-connect.vercel.app",
+  "https://sherwoodconnect.nu/**",
+  "https://sherwoodconnect.nu",
+  "https://www.sherwoodconnect.nu/**",
+  "https://www.sherwoodconnect.nu",
+  "https://sherwood-connect-nu-seven.vercel.app/**",
+  "https://sherwood-connect-nu-seven.vercel.app",
+  "http://localhost:3000/**",
+  "http://localhost:3000",
+]
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.rate_limit]
+anonymous_users = 30
+token_refresh = 150
+sign_in_sign_ups = 100
+token_verifications = 30
+email_sent = 2
+sms_sent = 30
+
+[auth.mfa]
+max_enrolled_factors = 10
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+max_frequency = "1m"
+otp_length = 8
+otp_expiry = 3600
+
+[auth.email.smtp]
+enabled = false
