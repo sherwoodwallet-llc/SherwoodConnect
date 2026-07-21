@@ -160,6 +160,17 @@ const OTP_TYPES = new Set<EmailOtpType>([
   "email_change",
 ]);
 
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function getFriendlyAuthError(message: string) {
+  if (/signups? (is |are )?not allowed|signup.*disabled/i.test(message)) {
+    return "New account signup is disabled in Supabase. Turn on email signups, then try this email again.";
+  }
+  return message;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const configured = isSupabaseConfigured;
   const [loading, setLoading] = useState(configured);
@@ -295,6 +306,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError("Enter your email.");
       return;
     }
+    if (!isValidEmail(trimmed)) {
+      setError("Enter a valid email address.");
+      return;
+    }
 
     const { error: signInError } = await getSupabase().auth.signInWithOtp({
       email: trimmed,
@@ -305,7 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (signInError) {
-      setError(signInError.message);
+      setError(getFriendlyAuthError(signInError.message));
       return;
     }
 

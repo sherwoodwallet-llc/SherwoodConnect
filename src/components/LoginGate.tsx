@@ -298,7 +298,7 @@ export function LoginGate() {
         Sign in to log your outreach. We will email you a secure one-time link.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
         <label className="relative block">
           <Mail
             className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-cream-muted"
@@ -307,11 +307,15 @@ export function LoginGate() {
           <input
             className="field w-full"
             style={{ paddingLeft: "2.6rem" }}
-            type="email"
+            type="text"
+            inputMode="email"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => setEmail(event.target.value.trimStart())}
             placeholder="you@example.com"
             autoComplete="email"
+            autoCapitalize="none"
+            spellCheck={false}
+            aria-invalid={Boolean(error)}
           />
         </label>
         {error ? <p className="text-sm text-red-300">{error}</p> : null}
