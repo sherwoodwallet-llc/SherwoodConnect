@@ -13,11 +13,13 @@ EXCLUDED_MANAGER_NUMBERS = {1}
 EXCLUDED_MANAGER_USER_IDS = {
     "1cd6e148-8714-4b42-bdc6-b73030c7e249",  # Hadi A
     "6309b2b9-16f3-490e-939e-9e5282ff5e88",  # Aayan Pattanayak
+    "1e87d119-b411-406f-868f-f0fb08e903d0",  # Old John Kirby account
 }
 EXCLUDED_MANAGER_EMAILS = {
     "hadiabdul8128@gmail.com",
     "lachyhachy@gmail.com",
     "aayanp@gmail.com",
+    "johnkirby078@gmail.com",
 }
 EXCLUDED_MANAGER_NAMES = {"hadi", "hadi a", "aayan pattanayak"}
 

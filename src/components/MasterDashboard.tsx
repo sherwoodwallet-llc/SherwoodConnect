@@ -23,9 +23,23 @@ import { AppHeader } from "./AppHeader";
 
 const POLL_INTERVAL_MS = 15_000;
 const EXCLUDED_MANAGER_NUMBERS = new Set([1]);
+const EXCLUDED_MANAGER_USER_IDS = new Set([
+  "1cd6e148-8714-4b42-bdc6-b73030c7e249",
+  "6309b2b9-16f3-490e-939e-9e5282ff5e88",
+]);
+const EXCLUDED_MANAGER_EMAILS = new Set([
+  "lachyhachy@gmail.com",
+  "aayanp@gmail.com",
+]);
+const EXCLUDED_MANAGER_NAMES = new Set(["hadi a", "aayan pattanayak"]);
 
 function isLongFormColumn(header: string) {
   return /note|summary|comment|detail|description/i.test(header);
+}
+
+function isPlaceholderProspect(row: SheetRow, headers: string[]) {
+  const primaryValue = (headers[0] ? row[headers[0]] : Object.values(row)[0]) ?? "";
+  return /^Additional Church Prospect #\d+$/i.test(primaryValue.trim());
 }
 
 function formatTime(value: Date | null) {
@@ -48,7 +62,16 @@ function Metric({ value, label }: { value: number; label: string }) {
 }
 
 function isExcludedManager(manager?: ManagerProfile | null) {
-  return Boolean(manager?.managerNumber && EXCLUDED_MANAGER_NUMBERS.has(manager.managerNumber));
+  if (!manager) return false;
+  const userId = manager.userId?.trim().toLowerCase();
+  const email = manager.email.trim().toLowerCase();
+  const name = manager.name.trim().toLowerCase();
+  return Boolean(
+    (manager.managerNumber && EXCLUDED_MANAGER_NUMBERS.has(manager.managerNumber)) ||
+      (userId && EXCLUDED_MANAGER_USER_IDS.has(userId)) ||
+      EXCLUDED_MANAGER_EMAILS.has(email) ||
+      EXCLUDED_MANAGER_NAMES.has(name),
+  );
 }
 
 function masterManagerLabel(manager?: ManagerProfile | null) {
@@ -151,26 +174,28 @@ export function MasterDashboard() {
     );
   }, [logs, logSearch]);
 
+  const visibleRows = useMemo(() => {
+    return rows.filter((row) => !isPlaceholderProspect(row, headers));
+  }, [headers, rows]);
+
   const filteredRows = useMemo(() => {
     const q = sheetSearch.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
+    if (!q) return visibleRows;
+    return visibleRows.filter((row) =>
       Object.values(row).join(" ").toLowerCase().includes(q),
     );
-  }, [rows, sheetSearch]);
+  }, [sheetSearch, visibleRows]);
 
   const metrics = useMemo(() => {
-    const managers = new Set(logs.map((log) => log.ownerEmail));
     const meetings = logs.filter((log) =>
       /^(yes|true|booked|✓)/i.test((log.data["Meeting Booked"] || "").trim()),
     ).length;
     return {
       totalLogs: logs.length,
-      managers: managers.size,
       meetings,
-      prospects: rows.length,
+      prospects: visibleRows.length,
     };
-  }, [logs, rows]);
+  }, [logs, visibleRows]);
 
   const taskMetrics = useMemo(() => {
     const active = tasks.filter((task) => ACTIVE_TASK_STATUSES.includes(task.status)).length;
@@ -223,9 +248,7 @@ export function MasterDashboard() {
       const existing =
         progress.get(key) ??
         {
-          label: task.assignedManagerNumber
-            ? `#${task.assignedManagerNumber} Unassigned`
-            : "Unassigned",
+          label: "Unassigned",
           assigned: 0,
           active: 0,
           sent: 0,
@@ -263,13 +286,13 @@ export function MasterDashboard() {
 
         <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Metric value={metrics.totalLogs} label="Total logs" />
-          <Metric value={metrics.managers} label="Active managers" />
+          <Metric value={managers.length} label="Active managers" />
           <Metric value={metrics.meetings} label="Meetings booked" />
-          <Metric value={metrics.prospects} label="Organizations" />
+          <Metric value={metrics.prospects} label="Pipeline orgs" />
         </section>
 
         <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Metric value={taskMetrics.total} label="Draft tasks" />
+          <Metric value={taskMetrics.total} label="Assigned drafts" />
           <Metric value={taskMetrics.active} label="Open tasks" />
           <Metric value={taskMetrics.sent} label="Marked sent" />
           <Metric value={taskMetrics.replied} label="Replies tracked" />
