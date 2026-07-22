@@ -32,6 +32,8 @@ const EXCLUDED_MANAGER_EMAILS = new Set([
   "aayanp@gmail.com",
 ]);
 const EXCLUDED_MANAGER_NAMES = new Set(["hadi a", "aayan pattanayak"]);
+const OLD_MANAGER_USER_IDS = new Set(["1e87d119-b411-406f-868f-f0fb08e903d0"]);
+const OLD_MANAGER_EMAILS = new Set(["johnkirby078@gmail.com"]);
 
 function isLongFormColumn(header: string) {
   return /note|summary|comment|detail|description/i.test(header);
@@ -76,6 +78,11 @@ function isExcludedManager(manager?: ManagerProfile | null) {
 
 function masterManagerLabel(manager?: ManagerProfile | null) {
   const label = managerLabel(manager);
+  const userId = manager?.userId?.trim().toLowerCase();
+  const email = manager?.email.trim().toLowerCase();
+  if ((userId && OLD_MANAGER_USER_IDS.has(userId)) || (email && OLD_MANAGER_EMAILS.has(email))) {
+    return `${label} (old)`;
+  }
   return isExcludedManager(manager) ? `${label} (excluded)` : label;
 }
 
