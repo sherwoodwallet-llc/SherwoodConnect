@@ -10,6 +10,16 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Outreach Task Agent", version="0.1.0")
 EXCLUDED_MANAGER_NUMBERS = {1}
+EXCLUDED_MANAGER_USER_IDS = {
+    "1cd6e148-8714-4b42-bdc6-b73030c7e249",  # Hadi A
+    "6309b2b9-16f3-490e-939e-9e5282ff5e88",  # Aayan Pattanayak
+}
+EXCLUDED_MANAGER_EMAILS = {
+    "hadiabdul8128@gmail.com",
+    "lachyhachy@gmail.com",
+    "aayanp@gmail.com",
+}
+EXCLUDED_MANAGER_NAMES = {"hadi", "hadi a", "aayan pattanayak"}
 
 
 class TaskType(str, Enum):
@@ -85,6 +95,12 @@ def fetch_active_managers() -> list[dict[str, Any]]:
         manager
         for manager in managers
         if manager.get("manager_number") not in EXCLUDED_MANAGER_NUMBERS
+        and str(manager.get("user_id") or "").strip().lower()
+        not in EXCLUDED_MANAGER_USER_IDS
+        and str(manager.get("email") or "").strip().lower()
+        not in EXCLUDED_MANAGER_EMAILS
+        and str(manager.get("name") or "").strip().lower()
+        not in EXCLUDED_MANAGER_NAMES
     ]
     if not managers:
         raise HTTPException(status_code=409, detail="No eligible active manager profiles found.")
@@ -176,6 +192,13 @@ def manager_display_name(manager: dict[str, Any]) -> str:
     return f"Manager {manager.get('manager_number') or manager['user_id']}"
 
 
+def manager_number_sort_key(manager_number: int | str) -> tuple[int, int | str]:
+    try:
+        return (0, int(manager_number))
+    except (TypeError, ValueError):
+        return (1, str(manager_number))
+
+
 def assign_sender_to_draft(draft: DraftInput, manager: dict[str, Any]) -> DraftInput:
     sender_name = manager_display_name(manager)
     draft_data = draft.model_dump()
@@ -256,6 +279,7 @@ def run(request: RunRequest) -> dict[str, Any]:
             continue
         qualified.append(draft)
 
+    target_drafts = len(managers) * 3
     full_manager_sets = min(len(managers), len(qualified) // 3)
     if full_manager_sets < 1:
         return {
@@ -263,7 +287,11 @@ def run(request: RunRequest) -> dict[str, Any]:
             "task": request.task.value,
             "batch_id": batch_id,
             "created": 0,
+            "eligible_manager_count": len(managers),
+            "target_drafts": target_drafts,
             "skipped_duplicates": len(skipped_duplicates),
+            "qualified_not_inserted": len(qualified),
+            "unfilled_manager_sets": len(managers),
             "assignments": [],
             "tasks": [],
             "status": "blocked_incomplete_manager_set",
@@ -298,7 +326,9 @@ def run(request: RunRequest) -> dict[str, Any]:
 
     assignments = [
         {"manager_number": manager_number, "task_count": count}
-        for manager_number, count in sorted(assignment_counts.items(), key=lambda item: str(item[0]))
+        for manager_number, count in sorted(
+            assignment_counts.items(), key=lambda item: manager_number_sort_key(item[0])
+        )
     ]
 
     return {
@@ -306,9 +336,19 @@ def run(request: RunRequest) -> dict[str, Any]:
         "task": request.task.value,
         "batch_id": batch_id,
         "created": len(created),
+        "eligible_manager_count": len(managers),
+        "target_drafts": target_drafts,
         "skipped_duplicates": len(skipped_duplicates),
         "qualified_not_inserted": max(len(qualified) - len(selected_drafts), 0),
-        "status": "complete" if created == len(selected_drafts) else "partial_error",
+        "unfilled_manager_sets": max(len(managers) - full_manager_sets, 0),
+        "status": (
+            "complete"
+            if created == len(selected_drafts)
+            and full_manager_sets == len(managers)
+            else "partial_complete"
+            if created == len(selected_drafts)
+            else "partial_error"
+        ),
         "assignments": assignments,
         "tasks": created,
     }
